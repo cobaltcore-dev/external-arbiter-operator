@@ -27,11 +27,11 @@ var _ = Describe("RemoteArbiter Controller", func() {
 			Name:      resourceName,
 			Namespace: "default", // TODO(user):Modify as needed
 		}
-		guestbook := &v1alpha1.RemoteArbiter{}
+		remoteArbiter := &v1alpha1.RemoteArbiter{}
 
 		BeforeEach(func() {
-			By("creating the custom resource for the Kind Guestbook")
-			err := k8sClient.Get(ctx, typeNamespacedName, guestbook)
+			By("creating the custom resource for the Kind RemoteArbiter")
+			err := k8sClient.Get(ctx, typeNamespacedName, remoteArbiter)
 			if err != nil && errors.IsNotFound(err) {
 				resource := &v1alpha1.RemoteArbiter{
 					ObjectMeta: metav1.ObjectMeta{
@@ -50,7 +50,7 @@ var _ = Describe("RemoteArbiter Controller", func() {
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Cleanup the specific resource instance Guestbook")
+			By("Cleanup the specific resource instance RemoteArbiter")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
 		It("should successfully reconcile the resource", func() {

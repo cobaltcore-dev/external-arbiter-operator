@@ -5,9 +5,9 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
-  - webapp.my.domain
+  - ceph.cobaltcore.sap.com
   resources:
-  - guestbooks
+  - remotearbiters
   verbs:
   - create
   - delete
@@ -17,15 +17,15 @@ rules:
   - update
   - watch
 - apiGroups:
-  - webapp.my.domain
+  - ceph.cobaltcore.sap.com
   resources:
-  - guestbooks/finalizers
+  - remotearbiters/finalizers
   verbs:
   - update
 - apiGroups:
-  - webapp.my.domain
+  - ceph.cobaltcore.sap.com
   resources:
-  - guestbooks/status
+  - remotearbiters/status
   verbs:
   - get
   - patch

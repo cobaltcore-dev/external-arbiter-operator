@@ -14,20 +14,20 @@ import (
 	"github.com/cobaltcore-dev/external-arbiter-operator/pkg/api/arbiter/v1alpha1"
 )
 
-// GuestbookReconciler reconciles a Guestbook object
+// RemoteArbiterReconciler reconciles a RemoteArbiter object
 type RemoteArbiterReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=webapp.my.domain,resources=guestbooks,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=webapp.my.domain,resources=guestbooks/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=webapp.my.domain,resources=guestbooks/finalizers,verbs=update
+// +kubebuilder:rbac:groups=ceph.cobaltcore.sap.com,resources=remotearbiters,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=ceph.cobaltcore.sap.com,resources=remotearbiters/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=ceph.cobaltcore.sap.com,resources=remotearbiters/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 // TODO(user): Modify the Reconcile function to compare the state specified by
-// the Guestbook object against the actual cluster state, and then
+// the RemoteArbiter object against the actual cluster state, and then
 // perform operations to make the cluster state reflect the state specified by
 // the user.
 //

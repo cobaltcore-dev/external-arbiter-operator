@@ -14,7 +14,7 @@ tidy:
 .PHONY: gen
 gen:
 	go tool controller-gen object:headerFile="./contrib/license-header.txt" paths="./..."
-	go tool controller-gen rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=contrib/crd
+	go tool controller-gen rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=contrib/k8s/crd output:rbac:artifacts:config=contrib/k8s/rbac
 
 .PHONY: vet
 vet:
