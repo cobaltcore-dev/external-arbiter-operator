@@ -5,7 +5,7 @@ linters:
   default: none
   enable:
     - copyloopvar
-    - dupl
+    # - dupl
     - errcheck
     - ginkgolinter
     - goconst

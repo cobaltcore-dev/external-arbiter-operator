@@ -5,9 +5,32 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - configmaps/status
+  - secrets
+  - secrets/status
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - configmaps/finalizers
+  - secrets/finalizers
+  verbs:
+  - update
+- apiGroups:
   - ceph.cobaltcore.sap.com
   resources:
   - remotearbiters
+  - remoteclusters
   verbs:
   - create
   - delete
@@ -20,13 +43,34 @@ rules:
   - ceph.cobaltcore.sap.com
   resources:
   - remotearbiters/finalizers
+  - remoteclusters/finalizers
   verbs:
   - update
 - apiGroups:
   - ceph.cobaltcore.sap.com
   resources:
   - remotearbiters/status
+  - remoteclusters/status
   verbs:
   - get
   - patch
+  - update
+- apiGroups:
+  - ceph.rook.io
+  resources:
+  - cephclusters
+  - cephclusters/status
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ceph.rook.io
+  resources:
+  - cephclusters/finalizers
+  verbs:
   - update

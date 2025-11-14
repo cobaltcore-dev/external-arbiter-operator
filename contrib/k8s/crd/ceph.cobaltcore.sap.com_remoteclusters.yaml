@@ -1,23 +1,24 @@
----
+# Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
+# SPDX-License-Identifier: Apache-2.0---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: remotearbiters.ceph.cobaltcore.sap.com
+  name: remoteclusters.ceph.cobaltcore.sap.com
 spec:
   group: ceph.cobaltcore.sap.com
   names:
-    kind: RemoteArbiter
-    listKind: RemoteArbiterList
-    plural: remotearbiters
-    singular: remotearbiter
+    kind: RemoteCluster
+    listKind: RemoteClusterList
+    plural: remoteclusters
+    singular: remotecluster
   scope: Namespaced
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: RemoteArbiter is the Schema for the remotearbiters API
+        description: RemoteCluster is the Schema for the remotclusters API
         properties:
           apiVersion:
             description: |-
@@ -37,27 +38,31 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of RemoteArbiter
+            description: spec defines the desired state of RemoteCluster
             properties:
-              foo:
-                description: foo is an example field of RemoteArbiter. Edit remotearbiter_types.go
-                  to remove/update
+              accesskeyRef:
+                properties:
+                  key:
+                    type: string
+                  name:
+                    type: string
+                required:
+                - key
+                - name
+                type: object
+              checkInterval:
+                default: 1m
                 type: string
+              namespace:
+                default: default
+                type: string
+            required:
+            - accesskeyRef
             type: object
           status:
-            description: status defines the observed state of RemoteArbiter
+            description: status defines the observed state of RemoteCluster
             properties:
               conditions:
-                description: |-
-                  conditions represent the current state of the RemoteArbiter resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -116,6 +121,10 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              message:
+                type: string
+              state:
+                type: string
             type: object
         required:
         - spec

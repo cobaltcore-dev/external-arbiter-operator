@@ -14,6 +14,7 @@ import (
 
 	"github.com/cobaltcore-dev/external-arbiter-operator/pkg/controller"
 
+	rookv1 "github.com/rook/rook/pkg/apis/ceph.rook.io/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -36,8 +37,8 @@ var (
 )
 
 func init() {
+	utilruntime.Must(rookv1.AddToScheme(scheme))
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -171,6 +172,13 @@ func main() {
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RemoteArbiter")
+		os.Exit(1)
+	}
+	if err := (&controller.RemoteClusterReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "RemoteCluster")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

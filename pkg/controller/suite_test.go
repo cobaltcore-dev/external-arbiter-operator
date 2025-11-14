@@ -14,6 +14,9 @@ import (
 
 	"github.com/cobaltcore-dev/external-arbiter-operator/pkg/api/arbiter/v1alpha1"
 
+	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -27,11 +30,15 @@ import (
 // http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
 
 var (
-	ctx       context.Context
-	cancel    context.CancelFunc
-	testEnv   *envtest.Environment
-	cfg       *rest.Config
-	k8sClient client.Client
+	ctx                       context.Context
+	cancel                    context.CancelFunc
+	sourceClusterTestEnv      *envtest.Environment
+	targetClusterTestEnv      *envtest.Environment
+	sourceCfg                 *rest.Config
+	targetCfg                 *rest.Config
+	sourceK8sClient           client.Client
+	targetK8sClient           client.Client
+	arbiterInstallerK8sClient client.Client
 )
 
 func TestControllers(t *testing.T) {
@@ -52,31 +59,130 @@ var _ = BeforeSuite(func() {
 	// +kubebuilder:scaffold:scheme
 
 	By("bootstrapping test environment")
-	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "contrib", "crd")},
+	sourceClusterTestEnv = &envtest.Environment{
+		CRDDirectoryPaths: []string{
+			filepath.Join("..", "..", "contrib", "k8s", "crd"),
+			filepath.Join("..", "..", "contrib", "k8s", "3rdparty"),
+		},
 		ErrorIfCRDPathMissing: true,
 	}
+
+	targetClusterTestEnv = &envtest.Environment{}
 
 	// Retrieve the first found binary directory to allow running tests from IDEs
 	envTestBinaryDir := getFirstFoundEnvTestBinaryDir()
 	if envTestBinaryDir != "" {
-		testEnv.BinaryAssetsDirectory = envTestBinaryDir
+		sourceClusterTestEnv.BinaryAssetsDirectory = envTestBinaryDir
+		targetClusterTestEnv.BinaryAssetsDirectory = envTestBinaryDir
 	}
 
 	// cfg is defined in this file globally.
-	cfg, err = testEnv.Start()
+	sourceCfg, err = sourceClusterTestEnv.Start()
 	Expect(err).NotTo(HaveOccurred())
-	Expect(cfg).NotTo(BeNil())
+	Expect(sourceCfg).NotTo(BeNil())
 
-	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
+	targetCfg, err = targetClusterTestEnv.Start()
 	Expect(err).NotTo(HaveOccurred())
-	Expect(k8sClient).NotTo(BeNil())
+	Expect(sourceCfg).NotTo(BeNil())
+
+	sourceK8sClient, err = client.New(sourceCfg, client.Options{Scheme: scheme.Scheme})
+	Expect(err).NotTo(HaveOccurred())
+	Expect(sourceK8sClient).NotTo(BeNil())
+
+	targetK8sClient, err = client.New(targetCfg, client.Options{})
+	Expect(err).NotTo(HaveOccurred())
+	Expect(sourceK8sClient).NotTo(BeNil())
+
+	arbiterInstallationNamespaceName := "target"
+	targetNamesapce := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: arbiterInstallationNamespaceName,
+		},
+	}
+	err = targetK8sClient.Create(ctx, targetNamesapce, &client.CreateOptions{})
+	Expect(err).NotTo(HaveOccurred())
+	arbiterInstallerRoleName := "arbiter-installer"
+	arbiterInstallerRole := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      arbiterInstallerRoleName,
+			Namespace: arbiterInstallationNamespaceName,
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				Verbs:     []string{"*"},
+				APIGroups: []string{"apps/v1"},
+				Resources: []string{"configmaps", "secrets"},
+			},
+			{
+				Verbs:     []string{"*"},
+				APIGroups: []string{"apps/v1"},
+				Resources: []string{"configmaps/status", "secrets/status"},
+			},
+			{
+				Verbs:     []string{"*"},
+				APIGroups: []string{"apps/v1"},
+				Resources: []string{"configmaps/finalizers", "secrets/finalizers"},
+			},
+
+			{
+				Verbs:     []string{"*"},
+				APIGroups: []string{""},
+				Resources: []string{"configmaps", "secrets"},
+			},
+			{
+				Verbs:     []string{"*"},
+				APIGroups: []string{""},
+				Resources: []string{"configmaps/status", "secrets/status"},
+			},
+			{
+				Verbs:     []string{"*"},
+				APIGroups: []string{""},
+				Resources: []string{"configmaps/finalizers", "secrets/finalizers"},
+			},
+		},
+	}
+	err = targetK8sClient.Create(ctx, arbiterInstallerRole, &client.CreateOptions{})
+	Expect(err).NotTo(HaveOccurred())
+
+	arbiterInstallerUserName := "arbiter-installer"
+	arbiterInstallerUser, err := targetClusterTestEnv.AddUser(envtest.User{Name: arbiterInstallerUserName}, targetCfg)
+	Expect(err).NotTo(HaveOccurred())
+
+	roleGVK, err := targetK8sClient.GroupVersionKindFor(arbiterInstallerRole)
+	Expect(err).NotTo(HaveOccurred())
+
+	arbiterInstallerRoleBindingName := "arbiter-installer"
+	arbiterIntallerRoleBinding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      arbiterInstallerRoleBindingName,
+			Namespace: arbiterInstallationNamespaceName,
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Name: arbiterInstallerUserName,
+				Kind: "User",
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Name: arbiterInstallerRoleName,
+			Kind: roleGVK.Kind,
+		},
+	}
+
+	err = targetK8sClient.Create(ctx, arbiterIntallerRoleBinding, &client.CreateOptions{})
+	Expect(err).NotTo(HaveOccurred())
+
+	arbiterInstallerK8sClient, err = client.New(arbiterInstallerUser.Config(), client.Options{})
+	Expect(err).NotTo(HaveOccurred())
+	Expect(sourceK8sClient).NotTo(BeNil())
 })
 
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
 	cancel()
-	err := testEnv.Stop()
+	err := sourceClusterTestEnv.Stop()
+	Expect(err).NotTo(HaveOccurred())
+	err = targetClusterTestEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })
 

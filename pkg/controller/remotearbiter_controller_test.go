@@ -31,33 +31,40 @@ var _ = Describe("RemoteArbiter Controller", func() {
 
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind RemoteArbiter")
-			err := k8sClient.Get(ctx, typeNamespacedName, remoteArbiter)
+			err := sourceK8sClient.Get(ctx, typeNamespacedName, remoteArbiter)
 			if err != nil && errors.IsNotFound(err) {
 				resource := &v1alpha1.RemoteArbiter{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: v1alpha1.RemoteArbiterSpec{
+						RemoteCluster: v1alpha1.RemoteClusterSpec{
+							AccessKeyRef: v1alpha1.KubeconfigSecretSource{
+								Name: "secret",
+								Key:  "kubeconfig.yaml",
+							},
+						},
+					},
 				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+				Expect(sourceK8sClient.Create(ctx, resource)).To(Succeed())
 			}
 		})
 
 		AfterEach(func() {
 			// TODO(user): Cleanup logic after each test, like removing the resource instance.
 			resource := &v1alpha1.RemoteArbiter{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			err := sourceK8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Cleanup the specific resource instance RemoteArbiter")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			Expect(sourceK8sClient.Delete(ctx, resource)).To(Succeed())
 		})
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &RemoteArbiterReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client: sourceK8sClient,
+				Scheme: sourceK8sClient.Scheme(),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{

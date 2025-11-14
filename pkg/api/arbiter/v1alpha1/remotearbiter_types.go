@@ -4,11 +4,19 @@
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+type NamespacedReference struct {
+	Namespace string `json:"namespace,omitempty"`
+	Name      string `json:"name,omitempty"`
+}
+
+type PodConfiguration struct {
+	Affinity  *corev1.Affinity             `json:"affinity,omitempty"`
+	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+}
 
 // RemoteArbiterSpec defines the desired state of RemoteArbiter
 type RemoteArbiterSpec struct {
@@ -16,10 +24,14 @@ type RemoteArbiterSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 	// The following markers will use OpenAPI v3 schema to validate the value
 	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+	Deployment PodConfiguration `json:"deployment,omitempty"`
+
+	CephCluster NamespacedReference `json:"cephCluster,omitempty"`
 
 	// foo is an example field of RemoteArbiter. Edit remotearbiter_types.go to remove/update
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+
+	RemoteCluster RemoteClusterSpec `json:"remoteCluster,omitempty"`
 }
 
 // RemoteArbiterStatus defines the observed state of RemoteArbiter.

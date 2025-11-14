@@ -6,10 +6,17 @@ package controller
 import (
 	"context"
 
+	rookv1 "github.com/rook/rook/pkg/apis/ceph.rook.io/v1"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/cobaltcore-dev/external-arbiter-operator/pkg/api/arbiter/v1alpha1"
 )
@@ -20,9 +27,21 @@ type RemoteArbiterReconciler struct {
 	Scheme *runtime.Scheme
 }
 
+// +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=configmaps/status,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=configmaps/finalizers,verbs=update
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=secrets/status,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=secrets/finalizers,verbs=update
+// +kubebuilder:rbac:groups=ceph.rook.io,resources=cephclusters,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=ceph.rook.io,resources=cephclusters/status,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=ceph.rook.io,resources=cephclusters/finalizers,verbs=update
 // +kubebuilder:rbac:groups=ceph.cobaltcore.sap.com,resources=remotearbiters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ceph.cobaltcore.sap.com,resources=remotearbiters/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ceph.cobaltcore.sap.com,resources=remotearbiters/finalizers,verbs=update
+// +kubebuilder:rbac:groups=ceph.cobaltcore.sap.com,resources=remoteclusters,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=ceph.cobaltcore.sap.com,resources=remoteclusters/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=ceph.cobaltcore.sap.com,resources=remoteclusters/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -46,5 +65,29 @@ func (r *RemoteArbiterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.RemoteArbiter{}).
 		Named("remotearbiter").
+		Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(r.findProperArbiter),
+			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
+		).
+		Watches(
+			&corev1.ConfigMap{},
+			handler.EnqueueRequestsFromMapFunc(r.findProperArbiter),
+			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
+		).
+		Watches(
+			&appsv1.Deployment{},
+			handler.EnqueueRequestsFromMapFunc(r.findProperArbiter),
+			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
+		).
+		Watches(
+			&rookv1.CephCluster{},
+			handler.EnqueueRequestsFromMapFunc(r.findProperArbiter),
+			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
+		).
 		Complete(r)
+}
+
+func (r *RemoteArbiterReconciler) findProperArbiter(ctx context.Context, configMap client.Object) []reconcile.Request {
+	return nil
 }

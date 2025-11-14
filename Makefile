@@ -3,6 +3,7 @@ GIT_TAG=$(shell git symbolic-ref -q --short HEAD || git describe --tags --exact-
 BUILD_DATE=$(shell date -Is -u)
 
 K8S_VERSION="1.34.1"
+ROOK_VERSION="1.18.6"
 
 .PHONY: all
 all: operator
@@ -13,8 +14,8 @@ tidy:
 
 .PHONY: gen
 gen:
-	go tool controller-gen object:headerFile="./contrib/license-header.txt" paths="./..."
-	go tool controller-gen rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=contrib/k8s/crd output:rbac:artifacts:config=contrib/k8s/rbac
+	go tool controller-gen object:headerFile="./contrib/go-license-header.txt" paths="./pkg/..."
+	go tool controller-gen rbac:roleName=manager-role crd:headerFile="./contrib/yaml-license-header.txt" webhook:headerFile="./contrib/yaml-license-header.txt" paths="./pkg/..." output:crd:artifacts:config=contrib/k8s/crd output:rbac:artifacts:config=contrib/k8s/rbac
 
 .PHONY: vet
 vet:
@@ -59,14 +60,21 @@ mkdir-build:
 operator: manager-bin
 	go build -ldflags="-X 'main.date=$(BUILD_DATE)' -X 'main.version=$(GIT_TAG)' -X 'main.commit=$(GIT_COMMIT)'" -o build/manager cmd/manager/main.go
 
+.PHONY: env
+env:
+	go tool setup-envtest use $(K8S_VERSION) --bin-dir ./.env -p path
+
+.PHONY: deps
+deps:
+	-git clone https://github.com/rook/rook.git
+	cd rook && git checkout v$(ROOK_VERSION)
+	mkdir -p contrib/k8s/3rdparty
+	cp -r rook/deploy/examples/crds.yaml contrib/k8s/3rdparty/rook.yaml
+
 .PHONY: test
-test: pretty env
+test: pretty env deps
 	go test ./...
 
 .PHONY: clean
 clean:
 	rm -rf build/
-
-.PHONY: env
-env:
-	go tool setup-envtest use $(K8S_VERSION) --bin-dir ./.env -p path
