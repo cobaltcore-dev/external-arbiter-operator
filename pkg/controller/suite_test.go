@@ -5,6 +5,8 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,8 +28,9 @@ import (
 	// +kubebuilder:scaffold:imports
 )
 
-// These tests use Ginkgo (BDD-style Go testing framework). Refer to
-// http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
+const (
+	ArbiterInstallationNamespaceName = "target"
+)
 
 var (
 	ctx                       context.Context
@@ -39,7 +42,26 @@ var (
 	sourceK8sClient           client.Client
 	targetK8sClient           client.Client
 	arbiterInstallerK8sClient client.Client
+	arbiterInstallerUser      *envtest.AuthenticatedUser
+	noPermissionsUser         *envtest.AuthenticatedUser
 )
+
+func FreePort() (int, error) {
+	address, err := net.ResolveTCPAddr("tcp", "0.0.0.0:0")
+	if err != nil {
+		return 0, err
+	}
+	listener, err := net.ListenTCP("tcp", address)
+	if err != nil {
+		return 0, err
+	}
+	defer listener.Close()
+	tcpAddress, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		return 0, errors.New("not a tcp address")
+	}
+	return tcpAddress.Port, nil
+}
 
 func TestControllers(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -93,37 +115,40 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(sourceK8sClient).NotTo(BeNil())
 
-	arbiterInstallationNamespaceName := "target"
-	targetNamesapce := &corev1.Namespace{
+	noPermissionsUserName := "no-permissions"
+	noPermissionsUser, err = targetClusterTestEnv.AddUser(envtest.User{Name: noPermissionsUserName}, targetCfg)
+	Expect(err).NotTo(HaveOccurred())
+
+	targetNamespace := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: arbiterInstallationNamespaceName,
+			Name: ArbiterInstallationNamespaceName,
 		},
 	}
-	err = targetK8sClient.Create(ctx, targetNamesapce, &client.CreateOptions{})
+	err = targetK8sClient.Create(ctx, targetNamespace, &client.CreateOptions{})
 	Expect(err).NotTo(HaveOccurred())
-	arbiterInstallerRoleName := "arbiter-installer"
+
+	arbiterInstallerRoleName := "arbiter-installer-role"
 	arbiterInstallerRole := &rbacv1.Role{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      arbiterInstallerRoleName,
-			Namespace: arbiterInstallationNamespaceName,
+			Namespace: ArbiterInstallationNamespaceName,
 		},
 		Rules: []rbacv1.PolicyRule{
 			{
 				Verbs:     []string{"*"},
-				APIGroups: []string{"apps/v1"},
-				Resources: []string{"configmaps", "secrets"},
+				APIGroups: []string{"apps"},
+				Resources: []string{"deployments"},
 			},
 			{
 				Verbs:     []string{"*"},
-				APIGroups: []string{"apps/v1"},
-				Resources: []string{"configmaps/status", "secrets/status"},
+				APIGroups: []string{"apps"},
+				Resources: []string{"deployments/status"},
 			},
 			{
 				Verbs:     []string{"*"},
-				APIGroups: []string{"apps/v1"},
-				Resources: []string{"configmaps/finalizers", "secrets/finalizers"},
+				APIGroups: []string{"apps"},
+				Resources: []string{"deployments/finalizers"},
 			},
-
 			{
 				Verbs:     []string{"*"},
 				APIGroups: []string{""},
@@ -144,18 +169,18 @@ var _ = BeforeSuite(func() {
 	err = targetK8sClient.Create(ctx, arbiterInstallerRole, &client.CreateOptions{})
 	Expect(err).NotTo(HaveOccurred())
 
-	arbiterInstallerUserName := "arbiter-installer"
-	arbiterInstallerUser, err := targetClusterTestEnv.AddUser(envtest.User{Name: arbiterInstallerUserName}, targetCfg)
+	arbiterInstallerUserName := "arbiter-installer-user"
+	arbiterInstallerUser, err = targetClusterTestEnv.AddUser(envtest.User{Name: arbiterInstallerUserName}, targetCfg)
 	Expect(err).NotTo(HaveOccurred())
 
 	roleGVK, err := targetK8sClient.GroupVersionKindFor(arbiterInstallerRole)
 	Expect(err).NotTo(HaveOccurred())
 
-	arbiterInstallerRoleBindingName := "arbiter-installer"
+	arbiterInstallerRoleBindingName := "arbiter-installer-rolebinding"
 	arbiterIntallerRoleBinding := &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      arbiterInstallerRoleBindingName,
-			Namespace: arbiterInstallationNamespaceName,
+			Namespace: ArbiterInstallationNamespaceName,
 		},
 		Subjects: []rbacv1.Subject{
 			{
@@ -164,8 +189,9 @@ var _ = BeforeSuite(func() {
 			},
 		},
 		RoleRef: rbacv1.RoleRef{
-			Name: arbiterInstallerRoleName,
-			Kind: roleGVK.Kind,
+			Name:     arbiterInstallerRoleName,
+			Kind:     roleGVK.Kind,
+			APIGroup: roleGVK.Group,
 		},
 	}
 
