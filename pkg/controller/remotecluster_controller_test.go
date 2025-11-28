@@ -108,6 +108,8 @@ var _ = Describe("RemoteCluster Controller", func() {
 			err = sourceK8sClient.Get(ctx, remoteClusterNamespacedName, remoteCluster)
 			Expect(err).NotTo(HaveOccurred())
 
+			Expect(remoteCluster.Status.State).To(Equal(v1alpha1.RemoteClusterErrorState))
+			Expect(remoteCluster.Status.Message).NotTo(BeEmpty())
 			Expect(remoteCluster.Status.Conditions).To(HaveLen(len(conditionsMap)))
 			for _, condition := range remoteCluster.Status.Conditions {
 				expectedCondition := conditionsMap[condition.Type]
@@ -153,6 +155,8 @@ var _ = Describe("RemoteCluster Controller", func() {
 			err = sourceK8sClient.Get(ctx, remoteClusterNamespacedName, remoteCluster)
 			Expect(err).NotTo(HaveOccurred())
 
+			Expect(remoteCluster.Status.State).To(Equal(v1alpha1.RemoteClusterErrorState))
+			Expect(remoteCluster.Status.Message).NotTo(BeEmpty())
 			Expect(remoteCluster.Status.Conditions).To(HaveLen(len(conditionsMap)))
 			for _, condition := range remoteCluster.Status.Conditions {
 				expectedCondition := conditionsMap[condition.Type]
@@ -198,6 +202,8 @@ var _ = Describe("RemoteCluster Controller", func() {
 			err = sourceK8sClient.Get(ctx, remoteClusterNamespacedName, remoteCluster)
 			Expect(err).NotTo(HaveOccurred())
 
+			Expect(remoteCluster.Status.State).To(Equal(v1alpha1.RemoteClusterErrorState))
+			Expect(remoteCluster.Status.Message).NotTo(BeEmpty())
 			Expect(remoteCluster.Status.Conditions).To(HaveLen(len(conditionsMap)))
 			for _, condition := range remoteCluster.Status.Conditions {
 				expectedCondition := conditionsMap[condition.Type]
@@ -253,6 +259,8 @@ var _ = Describe("RemoteCluster Controller", func() {
 			err = sourceK8sClient.Get(ctx, remoteClusterNamespacedName, remoteCluster)
 			Expect(err).NotTo(HaveOccurred())
 
+			Expect(remoteCluster.Status.State).To(Equal(v1alpha1.RemoteClusterErrorState))
+			Expect(remoteCluster.Status.Message).NotTo(BeEmpty())
 			Expect(remoteCluster.Status.Conditions).To(HaveLen(len(conditionsMap)))
 			for _, condition := range remoteCluster.Status.Conditions {
 				expectedCondition := conditionsMap[condition.Type]
@@ -301,6 +309,8 @@ var _ = Describe("RemoteCluster Controller", func() {
 			err = sourceK8sClient.Get(ctx, remoteClusterNamespacedName, remoteCluster)
 			Expect(err).NotTo(HaveOccurred())
 
+			Expect(remoteCluster.Status.State).To(Equal(v1alpha1.RemoteClusterErrorState))
+			Expect(remoteCluster.Status.Message).NotTo(BeEmpty())
 			Expect(remoteCluster.Status.Conditions).To(HaveLen(len(conditionsMap)))
 			for _, condition := range remoteCluster.Status.Conditions {
 				expectedCondition := conditionsMap[condition.Type]
@@ -349,6 +359,8 @@ var _ = Describe("RemoteCluster Controller", func() {
 			err = sourceK8sClient.Get(ctx, remoteClusterNamespacedName, remoteCluster)
 			Expect(err).NotTo(HaveOccurred())
 
+			Expect(remoteCluster.Status.State).To(Equal(v1alpha1.RemoteClusterReadyState))
+			Expect(remoteCluster.Status.Message).NotTo(BeEmpty())
 			Expect(remoteCluster.Status.Conditions).To(HaveLen(len(conditionsMap)))
 			for _, condition := range remoteCluster.Status.Conditions {
 				expectedCondition := conditionsMap[condition.Type]

@@ -39,10 +39,12 @@ var _ = Describe("RemoteArbiter Controller", func() {
 						Namespace: "default",
 					},
 					Spec: v1alpha1.RemoteArbiterSpec{
-						RemoteCluster: v1alpha1.RemoteClusterSpec{
-							AccessKeyRef: v1alpha1.KubeconfigSecretSource{
-								Name: "secret",
-								Key:  "kubeconfig.yaml",
+						RemoteCluster: v1alpha1.RemoteClusterConfiguration{
+							Spec: v1alpha1.RemoteClusterSpec{
+								AccessKeyRef: v1alpha1.KubeconfigSecretSource{
+									Name: "secret",
+									Key:  "kubeconfig.yaml",
+								},
 							},
 						},
 					},

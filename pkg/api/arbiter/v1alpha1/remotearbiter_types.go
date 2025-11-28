@@ -8,49 +8,67 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	RemoteClusterExistsConditionType   = "RemoteClusterExists"
+	RemoteClusterReadyConditionType    = "RemoteClusterReady"
+	CephClusterExistsConditionType     = "CephClusterExists"
+	CephClusterReadyConditionType      = "CephClusterReady"
+	ComponentsCreatedConditionType     = "ComponentsCreated"
+	CephClusterConfiguredConditionType = "CephClusterConfigured"
+	ArbiterHealthyConditionType        = "ArbiterHealthy"
+
+	RemoteArbiterInitState        RemoteArbiterState = "Init"
+	RemoteArbiterProgressingState RemoteArbiterState = "Progressing"
+	RemoteArbiterErrorState       RemoteArbiterState = "Error"
+	RemoteArbiterReadyState       RemoteArbiterState = "Ready"
+	RemoteArbiterDeletingState    RemoteArbiterState = "Deleting"
+)
+
+type RemoteArbiterState string
+
 type NamespacedReference struct {
+	// +optional
 	Namespace string `json:"namespace,omitempty"`
-	Name      string `json:"name,omitempty"`
+	// +required
+	Name string `json:"name,omitempty"`
 }
 
 type PodConfiguration struct {
-	Affinity  *corev1.Affinity             `json:"affinity,omitempty"`
+	// +optional
+	Affinity *corev1.Affinity `json:"affinity,omitempty"`
+	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// +kubebuilder:validation:ExactlyOneOf=name;spec
+type RemoteClusterConfiguration struct {
+	// +optional
+	Name string `json:"name,omitempty"`
+	// +optional
+	Spec RemoteClusterSpec `json:"spec,omitempty"`
 }
 
 // RemoteArbiterSpec defines the desired state of RemoteArbiter
 type RemoteArbiterSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+
+	// +optional
 	Deployment PodConfiguration `json:"deployment,omitempty"`
 
+	// +required
 	CephCluster NamespacedReference `json:"cephCluster,omitempty"`
 
-	// foo is an example field of RemoteArbiter. Edit remotearbiter_types.go to remove/update
+	// +required
+	RemoteCluster RemoteClusterConfiguration `json:"remoteCluster,omitempty"`
+	// +default="1m"
+	// +example="1m"
 	// +optional
-
-	RemoteCluster RemoteClusterSpec `json:"remoteCluster,omitempty"`
+	CheckInterval Interval `json:"checkInterval,omitempty"`
 }
 
 // RemoteArbiterStatus defines the observed state of RemoteArbiter.
 type RemoteArbiterStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
-	// conditions represent the current state of the RemoteArbiter resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	State   RemoteArbiterState `json:"state,omitempty"`
+	Message string             `json:"message,omitempty"`
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -68,13 +86,13 @@ type RemoteArbiter struct {
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty,omitzero"`
 
-	// spec defines the desired state of RemoteArbiter
-	// +required
-	Spec RemoteArbiterSpec `json:"spec"`
-
 	// status defines the observed state of RemoteArbiter
 	// +optional
 	Status RemoteArbiterStatus `json:"status,omitempty,omitzero"`
+
+	// spec defines the desired state of RemoteArbiter
+	// +required
+	Spec RemoteArbiterSpec `json:"spec"`
 }
 
 // +kubebuilder:object:root=true

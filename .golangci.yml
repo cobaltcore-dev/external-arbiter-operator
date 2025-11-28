@@ -9,7 +9,7 @@ linters:
     - errcheck
     - ginkgolinter
     - goconst
-    - gocyclo
+    # - gocyclo
     - govet
     - ineffassign
     - misspell

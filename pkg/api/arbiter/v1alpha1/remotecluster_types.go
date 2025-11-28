@@ -15,7 +15,15 @@ const (
 	ConvigValidConditionType          = "ConfigValid"
 	ClusterReachableConditionType     = "ClusterReachable"
 	HasEnoughPermissionsConditionType = "HasEnoughPermissions"
+
+	RemoteClusterInitState        RemoteClusterState = "Init"
+	RemoteClusterProgressingState RemoteClusterState = "Progressing"
+	RemoteClusterErrorState       RemoteClusterState = "Error"
+	RemoteClusterReadyState       RemoteClusterState = "Ready"
+	RemoteClusterDeletingState    RemoteClusterState = "Deleting"
 )
+
+type RemoteClusterState string
 
 type KubeconfigSecretSource struct {
 	// +required
@@ -62,8 +70,8 @@ type RemoteClusterSpec struct {
 
 // RemoteClusterStatus defines the observed state of RemoteCluster.
 type RemoteClusterStatus struct {
-	State   string `json:"state,omitempty"`
-	Message string `json:"message,omitempty"`
+	State   RemoteClusterState `json:"state,omitempty"`
+	Message string             `json:"message,omitempty"`
 	// +listType=map
 	// +listMapKey=type
 	// +optional

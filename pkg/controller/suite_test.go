@@ -55,7 +55,9 @@ func FreePort() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer listener.Close()
+	defer func() {
+		_ = listener.Close()
+	}()
 	tcpAddress, ok := listener.Addr().(*net.TCPAddr)
 	if !ok {
 		return 0, errors.New("not a tcp address")
