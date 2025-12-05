@@ -17,6 +17,11 @@ gen:
 	go tool controller-gen object:headerFile="./contrib/go-license-header.txt" paths="./pkg/..."
 	go tool controller-gen rbac:roleName=manager-role crd:headerFile="./contrib/yaml-license-header.txt" webhook:headerFile="./contrib/yaml-license-header.txt" paths="./pkg/..." output:crd:artifacts:config=contrib/k8s/crd output:rbac:artifacts:config=contrib/k8s/rbac
 
+.PHONY: helm
+helm:
+	cp contrib/k8s/crd/ceph.cobaltcore.sap.com_remotearbiters.yaml contrib/charts/external-arbiter-operator/templates/remotearbiter-crd.yaml
+	cp contrib/k8s/crd/ceph.cobaltcore.sap.com_remoteclusters.yaml contrib/charts/external-arbiter-operator/templates/remotecluster-crd.yaml
+
 .PHONY: vet
 vet:
 	go vet ./...

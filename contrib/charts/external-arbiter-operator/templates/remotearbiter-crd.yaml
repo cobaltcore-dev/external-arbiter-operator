@@ -974,10 +974,6 @@ spec:
                             x-kubernetes-list-type: atomic
                         type: object
                     type: object
-                  nodeSelector:
-                    additionalProperties:
-                      type: string
-                    type: object
                   resources:
                     description: ResourceRequirements describes the compute resource
                       requirements.
@@ -1039,9 +1035,6 @@ spec:
                         type: object
                     type: object
                 type: object
-              monIdPrefix:
-                default: ext-
-                type: string
               remoteCluster:
                 properties:
                   name:
@@ -1140,8 +1133,6 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               message:
-                type: string
-              monId:
                 type: string
               state:
                 type: string

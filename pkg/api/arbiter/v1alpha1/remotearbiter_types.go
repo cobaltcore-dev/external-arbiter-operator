@@ -9,13 +9,15 @@ import (
 )
 
 const (
-	RemoteClusterExistsConditionType   = "RemoteClusterExists"
-	RemoteClusterReadyConditionType    = "RemoteClusterReady"
-	CephClusterExistsConditionType     = "CephClusterExists"
-	CephClusterReadyConditionType      = "CephClusterReady"
-	ComponentsCreatedConditionType     = "ComponentsCreated"
-	CephClusterConfiguredConditionType = "CephClusterConfigured"
-	ArbiterHealthyConditionType        = "ArbiterHealthy"
+	RemoteClusterExistsConditionType      = "RemoteClusterExists"
+	RemoteClusterReadyConditionType       = "RemoteClusterReady"
+	CephClusterExistsConditionType        = "CephClusterExists"
+	CephClusterReadyConditionType         = "CephClusterReady"
+	CephClusterConfiguredConditionType    = "CephClusterConfigured"
+	MonotorDeploymentExistsConditionType  = "MonitorDeploymentExists"
+	MonotorDeploymentReadyConditionType   = "MonitorDeploymentReady"
+	ArbiterDeploymentrExistsConditionType = "ArbiterDeploymentExists"
+	ArbiterDeploymentReadyConditionType   = "ArbiterDeploymentReady"
 
 	RemoteArbiterInitState        RemoteArbiterState = "Init"
 	RemoteArbiterProgressingState RemoteArbiterState = "Progressing"
@@ -38,6 +40,8 @@ type PodConfiguration struct {
 	Affinity *corev1.Affinity `json:"affinity,omitempty"`
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 }
 
 // +kubebuilder:validation:ExactlyOneOf=name;spec
@@ -57,6 +61,11 @@ type RemoteArbiterSpec struct {
 	// +required
 	CephCluster NamespacedReference `json:"cephCluster,omitempty"`
 
+	// +default="ext-"
+	// +example="ext-"
+	// +optional
+	MonIDPrefix string `json:"monIdPrefix,omitempty"`
+
 	// +required
 	RemoteCluster RemoteClusterConfiguration `json:"remoteCluster,omitempty"`
 	// +default="1m"
@@ -69,6 +78,7 @@ type RemoteArbiterSpec struct {
 type RemoteArbiterStatus struct {
 	State   RemoteArbiterState `json:"state,omitempty"`
 	Message string             `json:"message,omitempty"`
+	MonID   string             `json:"monId,omitempty"`
 	// +listType=map
 	// +listMapKey=type
 	// +optional

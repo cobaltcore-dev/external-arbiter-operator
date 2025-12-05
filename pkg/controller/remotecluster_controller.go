@@ -34,13 +34,6 @@ import (
 const (
 	RemoteClusterFinalizer = "remotecluster.ceph.cobaltcore.sap.com/finalizer"
 
-	SecretTypeName        = "secret"
-	RemoteClusterTypeName = "remotecluster"
-
-	ReasonInit  = "Init"
-	ReasonOK    = "OK"
-	ReasonError = "Error"
-
 	RemoteClusterSecretKey = ".remotecluster.secret"
 )
 

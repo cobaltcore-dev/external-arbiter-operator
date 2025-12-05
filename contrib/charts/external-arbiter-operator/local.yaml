@@ -1,0 +1,49 @@
+# Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
+# SPDX-License-Identifier: Apache-2.0
+---
+imagePullSecrets: []
+
+manager:
+  image:
+    repository: localhost:5000/cobaltcore/external-arbiter-operator
+    pullPolicy: IfNotPresent
+    tag: "latest"
+  resources:
+    limits:
+      cpu: 100m
+      memory: 30Mi
+    requests:
+      cpu: 100m
+      memory: 20Mi
+  securityContext:
+    allowPrivilegeEscalation: false
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+replicaCount: 1
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+
+metricsService:
+  type: ClusterIP
+  port: 8443
+
+webhookService:
+  type: ClusterIP
+  port: 443
+
+cluster:
+  domain: cluster.local
+
+leaderElection:
+  leaderElect: true
+  resourceName: ecaf1259.cobaltcore.sap.com
