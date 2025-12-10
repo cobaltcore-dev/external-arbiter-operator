@@ -15,7 +15,7 @@ tidy:
 .PHONY: gen
 gen:
 	go tool controller-gen object:headerFile="./contrib/go-license-header.txt" paths="./pkg/..."
-	go tool controller-gen rbac:roleName=manager-role crd:headerFile="./contrib/yaml-license-header.txt" webhook:headerFile="./contrib/yaml-license-header.txt" paths="./pkg/..." output:crd:artifacts:config=contrib/k8s/crd output:rbac:artifacts:config=contrib/k8s/rbac
+	go tool controller-gen rbac:roleName=manager-role,headerFile="./contrib/yaml-license-header.txt" crd:headerFile="./contrib/yaml-license-header.txt" webhook:headerFile="./contrib/yaml-license-header.txt" paths="./pkg/..." output:crd:artifacts:config=contrib/k8s/crd output:rbac:artifacts:config=contrib/k8s/rbac
 
 .PHONY: helm
 helm:

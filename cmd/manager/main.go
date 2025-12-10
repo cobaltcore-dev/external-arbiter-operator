@@ -12,6 +12,7 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	"github.com/cobaltcore-dev/external-arbiter-operator/pkg/api/arbiter/v1alpha1"
 	"github.com/cobaltcore-dev/external-arbiter-operator/pkg/controller"
 
 	rookv1 "github.com/rook/rook/pkg/apis/ceph.rook.io/v1"
@@ -38,6 +39,7 @@ var (
 
 func init() {
 	utilruntime.Must(rookv1.AddToScheme(scheme))
+	utilruntime.Must(v1alpha1.AddToScheme(scheme))
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }

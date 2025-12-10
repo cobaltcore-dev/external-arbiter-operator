@@ -37,9 +37,10 @@ import (
 const (
 	RemoteArbiterFinalizer = "remotearbiter.ceph.cobaltcore.sap.com/finalizer"
 
-	RemoteArbiterResourceVersionAnnotation = "ceph.cobaltcore.sap.com/last-applied-resource-version"
-	RemoteArbiterRestartAnnotation         = "ceph.cobaltcore.sap.com/restarted-at"
-	RemoteArbiterLookupLabel               = "ceph.cobaltcore.sap.com/lookup"
+	RemoteArbiterRestartAnnotation = "ceph.cobaltcore.sap.com/restarted-at"
+
+	RemoteArbiterResourceVersionLabel = "ceph.cobaltcore.sap.com/last-applied-resource-version"
+	RemoteArbiterLookupLabel          = "ceph.cobaltcore.sap.com/lookup"
 
 	RemoteClusterOwnerKey = ".remotecluster.owner"
 )
@@ -49,23 +50,23 @@ var (
 )
 
 type RemoteArbiterReconcilationState struct {
-	log                               *logr.Logger
-	remoteArbiterObjectKey            *types.NamespacedName
-	remoteArbiter                     *v1alpha1.RemoteArbiter
-	remoteClusterObjectKey            *types.NamespacedName
-	remoteCluster                     *v1alpha1.RemoteCluster
-	remoteClusterSecretObjectKey      *types.NamespacedName
-	remoteClusterSecret               *corev1.Secret
-	remoteClusterClient               client.Client
-	cephClusterObjectKey              *types.NamespacedName
-	cephCluster                       *rookv1.CephCluster
-	monitorDeploymentObjectKey        *types.NamespacedName
-	monitorDeployment                 *appsv1.Deployment
-	monitorKeyringSecretObjectKey     *types.NamespacedName
-	monitorKeyringSecret              *corev1.Secret
-	monitorOverrideConfigMapObjectKey *types.NamespacedName
-	monitorOverrideConfigMap          *corev1.ConfigMap
-	monitorEnvVarSecretObjectKey      *types.NamespacedName
+	log                          *logr.Logger
+	remoteArbiterObjectKey       *types.NamespacedName
+	remoteArbiter                *v1alpha1.RemoteArbiter
+	remoteClusterObjectKey       *types.NamespacedName
+	remoteCluster                *v1alpha1.RemoteCluster
+	remoteClusterSecretObjectKey *types.NamespacedName
+	remoteClusterSecret          *corev1.Secret
+	remoteClusterClient          client.Client
+	cephClusterObjectKey         *types.NamespacedName
+	cephCluster                  *rookv1.CephCluster
+	// monitorDeploymentObjectKey        *types.NamespacedName
+	monitorDeployment *appsv1.Deployment
+	// monitorKeyringSecretObjectKey     *types.NamespacedName
+	monitorKeyringSecret *corev1.Secret
+	// monitorOverrideConfigMapObjectKey *types.NamespacedName
+	monitorOverrideConfigMap *corev1.ConfigMap
+	// monitorEnvVarSecretObjectKey      *types.NamespacedName
 	monitorEnvVarSecret               *corev1.Secret
 	arbiterDeploymentObjectKey        *types.NamespacedName
 	arbiterDeployment                 *appsv1.Deployment
@@ -236,7 +237,7 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.fetchMonitorDeployment(ctx, s); err != nil {
 		log.Error(err, "unable to fetch monitor deployment")
 		if err := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
-			v1alpha1.MonotorDeploymentExistsConditionType, err); err != nil {
+			v1alpha1.MonitorDeploymentExistsConditionType, err); err != nil {
 			log.Error(err, "unable to update resource with conditions")
 			return ctrl.Result{}, err
 		}
@@ -247,16 +248,16 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	log.Info(statusMessage)
 
 	if err := r.updateRemoteArbiterStatusOnSuccess(ctx, s.remoteArbiter,
-		v1alpha1.RemoteArbiterProgressingState, v1alpha1.MonotorDeploymentExistsConditionType, statusMessage); err != nil {
+		v1alpha1.RemoteArbiterProgressingState, v1alpha1.MonitorDeploymentExistsConditionType, statusMessage); err != nil {
 		log.Error(err, "unable to update resource with conditions")
 		return ctrl.Result{}, err
 	}
 
-	if s.monitorDeployment.Status.UnavailableReplicas != 0 {
+	if s.monitorDeployment.Status.Replicas == 0 || s.monitorDeployment.Status.UnavailableReplicas != 0 {
 		err := errors.New("monitor deployment is not ready")
 		log.Error(err, "unable to use monitor deployment")
 		if err := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
-			v1alpha1.MonotorDeploymentReadyConditionType, err); err != nil {
+			v1alpha1.MonitorDeploymentReadyConditionType, err); err != nil {
 			log.Error(err, "unable to update resource with conditions")
 			return ctrl.Result{}, err
 		}
@@ -266,7 +267,7 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		err := errors.New("monitor deployment is updating self")
 		log.Error(err, "unable to use monitor deployment")
 		if err := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
-			v1alpha1.MonotorDeploymentReadyConditionType, err); err != nil {
+			v1alpha1.MonitorDeploymentReadyConditionType, err); err != nil {
 			log.Error(err, "unable to update resource with conditions")
 			return ctrl.Result{}, err
 		}
@@ -277,7 +278,7 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	log.Info(statusMessage)
 
 	if err := r.updateRemoteArbiterStatusOnSuccess(ctx, s.remoteArbiter,
-		v1alpha1.RemoteArbiterProgressingState, v1alpha1.MonotorDeploymentReadyConditionType, statusMessage); err != nil {
+		v1alpha1.RemoteArbiterProgressingState, v1alpha1.MonitorDeploymentReadyConditionType, statusMessage); err != nil {
 		log.Error(err, "unable to update resource with conditions")
 		return ctrl.Result{}, err
 	}
@@ -285,7 +286,7 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.fetchArbiterDeployment(ctx, s); err != nil {
 		log.Error(err, "unable to fetch arbiter deployment")
 		if err := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
-			v1alpha1.ArbiterDeploymentrExistsConditionType, err); err != nil {
+			v1alpha1.ArbiterDeploymentExistsConditionType, err); err != nil {
 			log.Error(err, "unable to update resource with conditions")
 			return ctrl.Result{}, err
 		}
@@ -296,7 +297,7 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	log.Info(statusMessage)
 
 	if err := r.updateRemoteArbiterStatusOnSuccess(ctx, s.remoteArbiter,
-		v1alpha1.RemoteArbiterProgressingState, v1alpha1.ArbiterDeploymentrExistsConditionType, statusMessage); err != nil {
+		v1alpha1.RemoteArbiterProgressingState, v1alpha1.ArbiterDeploymentExistsConditionType, statusMessage); err != nil {
 		log.Error(err, "unable to update resource with conditions")
 		return ctrl.Result{}, err
 	}
@@ -328,7 +329,7 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		log.Info("arbiter deployment restart will not be additionally triggered")
 	}
 
-	if s.arbiterDeployment.Status.UnavailableReplicas != 0 {
+	if s.arbiterDeployment.Status.Replicas == 0 || s.arbiterDeployment.Status.UnavailableReplicas != 0 {
 		err := errors.New("arbiter deployment is not ready")
 		log.Error(err, "unable to use arbiter deployment")
 		if err := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
@@ -338,7 +339,7 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 		return ctrl.Result{}, err
 	}
-	if s.arbiterDeployment.Status.UpdatedReplicas != s.monitorDeployment.Status.Replicas {
+	if s.arbiterDeployment.Status.UpdatedReplicas != s.arbiterDeployment.Status.Replicas {
 		err := errors.New("arbiter deployment is updating self")
 		log.Error(err, "unable to use arbiter deployment")
 		if err := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
@@ -366,12 +367,14 @@ func (r *RemoteArbiterReconciler) reserveExternalArbiterID(ctx context.Context, 
 	suffixFirstCode := byte(97)
 	suffixLastCode := byte(122)
 
-	externalID := ""
-	for suffixCode := suffixFirstCode; suffixCode <= suffixLastCode; suffixCode++ {
-		potentialID := prefix + string([]byte{suffixCode})
-		if !slices.Contains(s.cephCluster.Spec.Mon.ExternalMonIDs, potentialID) {
-			externalID = potentialID
-			break
+	externalID := s.remoteArbiter.Status.MonID
+	if externalID == "" {
+		for suffixCode := suffixFirstCode; suffixCode <= suffixLastCode; suffixCode++ {
+			potentialID := prefix + string([]byte{suffixCode})
+			if !slices.Contains(s.cephCluster.Spec.Mon.ExternalMonIDs, potentialID) {
+				externalID = potentialID
+				break
+			}
 		}
 	}
 
@@ -379,9 +382,9 @@ func (r *RemoteArbiterReconciler) reserveExternalArbiterID(ctx context.Context, 
 		return fmt.Errorf("ids with prefix %s and suffixes from %s to %s are occupied", prefix, string([]byte{suffixFirstCode}), string([]byte{suffixLastCode}))
 	}
 
-	s.cephCluster.Spec.Mon.ExternalMonIDs = append(s.cephCluster.Spec.Mon.ExternalMonIDs, externalID)
-	if err := r.Update(ctx, s.cephCluster); err != nil {
-		return err
+	if slices.Contains(s.cephCluster.Spec.Mon.ExternalMonIDs, externalID) {
+		s.log.Info("external remote arbiter id is already set", "external id", externalID)
+		return nil
 	}
 
 	s.remoteArbiter.Status.MonID = externalID
@@ -389,11 +392,16 @@ func (r *RemoteArbiterReconciler) reserveExternalArbiterID(ctx context.Context, 
 		return err
 	}
 
+	s.cephCluster.Spec.Mon.ExternalMonIDs = append(s.cephCluster.Spec.Mon.ExternalMonIDs, externalID)
+	if err := r.Update(ctx, s.cephCluster); err != nil {
+		return err
+	}
+
 	return nil
 }
 
 func (r *RemoteArbiterReconciler) checkArbiterDeploymentUpToDate(ctx context.Context, s *RemoteArbiterReconcilationState) error {
-	lastAppliedVersion := s.arbiterKeyringSecret.Annotations[RemoteArbiterResourceVersionAnnotation]
+	lastAppliedVersion := s.arbiterKeyringSecret.Labels[RemoteArbiterResourceVersionLabel]
 	if s.monitorKeyringSecret.ResourceVersion != lastAppliedVersion {
 		s.log.Info("keyring secret is outdated")
 		if err := r.updateArbiterKeyringSecret(ctx, s); err != nil {
@@ -406,9 +414,9 @@ func (r *RemoteArbiterReconciler) checkArbiterDeploymentUpToDate(ctx context.Con
 		s.log.Info("keyring secret is up to date")
 	}
 
-	lastAppliedVersion = s.arbiterEnvVarSecret.Annotations[RemoteArbiterResourceVersionAnnotation]
+	lastAppliedVersion = s.arbiterEnvVarSecret.Labels[RemoteArbiterResourceVersionLabel]
 	if s.monitorEnvVarSecret.ResourceVersion != lastAppliedVersion {
-		s.log.Info("env vat secret is outdated")
+		s.log.Info("env var secret is outdated")
 		if err := r.updateArbiterEnvVarSecret(ctx, s); err != nil {
 			s.log.Error(err, "unable to update arbiter env var secret")
 			return err
@@ -419,7 +427,7 @@ func (r *RemoteArbiterReconciler) checkArbiterDeploymentUpToDate(ctx context.Con
 		s.log.Info("env var secret is up to date")
 	}
 
-	lastAppliedVersion = s.arbiterOverrideConfigMap.Annotations[RemoteArbiterResourceVersionAnnotation]
+	lastAppliedVersion = s.arbiterOverrideConfigMap.Labels[RemoteArbiterResourceVersionLabel]
 	if s.monitorOverrideConfigMap.ResourceVersion != lastAppliedVersion {
 		s.log.Info("override configmap is outdated")
 		if err := r.updateArbiterOverrideConfigMap(ctx, s); err != nil {
@@ -432,8 +440,8 @@ func (r *RemoteArbiterReconciler) checkArbiterDeploymentUpToDate(ctx context.Con
 		s.log.Info("override configmap is up to date")
 	}
 
-	deploymentLastAppliedVersion := s.arbiterDeployment.Annotations[RemoteArbiterResourceVersionAnnotation]
-	if s.monitorDeployment.ResourceVersion != deploymentLastAppliedVersion {
+	lastAppliedVersion = s.arbiterDeployment.Labels[RemoteArbiterResourceVersionLabel]
+	if s.monitorDeployment.ResourceVersion != lastAppliedVersion {
 		s.log.Info("deployment is outdated")
 		if err := r.updateArbiterDeployment(ctx, s); err != nil {
 			s.log.Error(err, "unable to update arbiter deployment")
@@ -451,7 +459,7 @@ func (r *RemoteArbiterReconciler) checkArbiterDeploymentUpToDate(ctx context.Con
 }
 
 func (r *RemoteArbiterReconciler) updateArbiterKeyringSecret(ctx context.Context, s *RemoteArbiterReconcilationState) error {
-	s.arbiterKeyringSecret.Annotations[RemoteArbiterResourceVersionAnnotation] = s.monitorKeyringSecret.ResourceVersion
+	s.arbiterKeyringSecret.Labels[RemoteArbiterResourceVersionLabel] = s.monitorKeyringSecret.ResourceVersion
 	s.arbiterKeyringSecret.Data = s.monitorKeyringSecret.Data
 
 	if err := s.remoteClusterClient.Update(ctx, s.arbiterKeyringSecret); err != nil {
@@ -463,7 +471,7 @@ func (r *RemoteArbiterReconciler) updateArbiterKeyringSecret(ctx context.Context
 }
 
 func (r *RemoteArbiterReconciler) updateArbiterEnvVarSecret(ctx context.Context, s *RemoteArbiterReconcilationState) error {
-	s.arbiterEnvVarSecret.Annotations[RemoteArbiterResourceVersionAnnotation] = s.monitorEnvVarSecret.ResourceVersion
+	s.arbiterEnvVarSecret.Labels[RemoteArbiterResourceVersionLabel] = s.monitorEnvVarSecret.ResourceVersion
 	s.arbiterEnvVarSecret.Data = s.monitorEnvVarSecret.Data
 
 	if err := s.remoteClusterClient.Update(ctx, s.arbiterEnvVarSecret); err != nil {
@@ -475,7 +483,7 @@ func (r *RemoteArbiterReconciler) updateArbiterEnvVarSecret(ctx context.Context,
 }
 
 func (r *RemoteArbiterReconciler) updateArbiterOverrideConfigMap(ctx context.Context, s *RemoteArbiterReconcilationState) error {
-	s.arbiterOverrideConfigMap.Annotations[RemoteArbiterResourceVersionAnnotation] = s.monitorOverrideConfigMap.ResourceVersion
+	s.arbiterOverrideConfigMap.Labels[RemoteArbiterResourceVersionLabel] = s.monitorOverrideConfigMap.ResourceVersion
 	s.arbiterOverrideConfigMap.Data = s.monitorOverrideConfigMap.Data
 
 	if err := s.remoteClusterClient.Update(ctx, s.arbiterOverrideConfigMap); err != nil {
@@ -487,9 +495,17 @@ func (r *RemoteArbiterReconciler) updateArbiterOverrideConfigMap(ctx context.Con
 }
 
 func (r *RemoteArbiterReconciler) makeDeploymentSpec(s *RemoteArbiterReconcilationState) {
+	podLabels := map[string]string{
+		RemoteArbiterLookupLabel: s.remoteArbiter.Name,
+	}
+
 	spec := s.monitorDeployment.Spec.DeepCopy()
-	spec.Selector = nil
-	spec.Template.ObjectMeta = metav1.ObjectMeta{}
+	spec.Selector = &metav1.LabelSelector{
+		MatchLabels: podLabels,
+	}
+	spec.Template.ObjectMeta = metav1.ObjectMeta{
+		Labels: podLabels,
+	}
 	spec.Template.Spec.ServiceAccountName = ""
 	spec.Template.Spec.DeprecatedServiceAccount = ""
 	spec.Template.Spec.NodeSelector = s.remoteArbiter.Spec.Deployment.NodeSelector
@@ -543,8 +559,11 @@ func (r *RemoteArbiterReconciler) modifyContainers(containers []corev1.Container
 func (r *RemoteArbiterReconciler) updateArbiterDeployment(ctx context.Context, s *RemoteArbiterReconcilationState) error {
 	r.makeDeploymentSpec(s)
 
-	s.arbiterDeployment.Annotations[RemoteArbiterResourceVersionAnnotation] = s.monitorDeployment.ResourceVersion
-	s.arbiterDeployment.Annotations[RemoteArbiterRestartAnnotation] = time.Now().Format(time.RFC3339)
+	s.arbiterDeployment.Labels[RemoteArbiterResourceVersionLabel] = s.monitorDeployment.ResourceVersion
+	if s.arbiterDeployment.Spec.Template.Annotations == nil {
+		s.arbiterDeployment.Spec.Template.Annotations = map[string]string{}
+	}
+	s.arbiterDeployment.Spec.Template.Annotations[RemoteArbiterRestartAnnotation] = time.Now().Format(time.RFC3339)
 
 	if err := s.remoteClusterClient.Update(ctx, s.arbiterDeployment); err != nil {
 		s.log.Error(err, "unable to update resource", ConfigMapTypeName, s.arbiterDeploymentObjectKey)
@@ -555,7 +574,10 @@ func (r *RemoteArbiterReconciler) updateArbiterDeployment(ctx context.Context, s
 }
 
 func (r *RemoteArbiterReconciler) restartArbiterDeployment(ctx context.Context, s *RemoteArbiterReconcilationState) error {
-	s.arbiterDeployment.Annotations[RemoteArbiterRestartAnnotation] = time.Now().Format(time.RFC3339)
+	if s.arbiterDeployment.Spec.Template.Annotations == nil {
+		s.arbiterDeployment.Spec.Template.Annotations = map[string]string{}
+	}
+	s.arbiterDeployment.Spec.Template.Annotations[RemoteArbiterRestartAnnotation] = time.Now().Format(time.RFC3339)
 
 	if err := s.remoteClusterClient.Update(ctx, s.arbiterDeployment); err != nil {
 		s.log.Error(err, "unable to update resource", ConfigMapTypeName, s.arbiterDeploymentObjectKey)
@@ -648,9 +670,9 @@ func (r *RemoteArbiterReconciler) createArbiterKeyringSecret(ctx context.Context
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "arbiter-keyring-secret-",
 			Namespace:    s.remoteCluster.Spec.Namespace,
-			Annotations: map[string]string{
-				RemoteArbiterResourceVersionAnnotation: s.monitorKeyringSecret.ResourceVersion,
-				RemoteArbiterLookupLabel:               s.remoteArbiter.Name,
+			Labels: map[string]string{
+				RemoteArbiterResourceVersionLabel: s.monitorKeyringSecret.ResourceVersion,
+				RemoteArbiterLookupLabel:          s.remoteArbiter.Name,
 			},
 			Finalizers: []string{RemoteArbiterFinalizer},
 		},
@@ -671,9 +693,9 @@ func (r *RemoteArbiterReconciler) createArbiterEnvVarSecret(ctx context.Context,
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "arbiter-env-var-secret-",
 			Namespace:    s.remoteCluster.Spec.Namespace,
-			Annotations: map[string]string{
-				RemoteArbiterResourceVersionAnnotation: s.monitorEnvVarSecret.ResourceVersion,
-				RemoteArbiterLookupLabel:               s.remoteArbiter.Name,
+			Labels: map[string]string{
+				RemoteArbiterResourceVersionLabel: s.monitorEnvVarSecret.ResourceVersion,
+				RemoteArbiterLookupLabel:          s.remoteArbiter.Name,
 			},
 			Finalizers: []string{RemoteArbiterFinalizer},
 		},
@@ -694,9 +716,9 @@ func (r *RemoteArbiterReconciler) createArbiterOverrideConfigMap(ctx context.Con
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "arbiter-override-configmap-",
 			Namespace:    s.remoteCluster.Spec.Namespace,
-			Annotations: map[string]string{
-				RemoteArbiterResourceVersionAnnotation: s.monitorOverrideConfigMap.ResourceVersion,
-				RemoteArbiterLookupLabel:               s.remoteArbiter.Name,
+			Labels: map[string]string{
+				RemoteArbiterResourceVersionLabel: s.monitorOverrideConfigMap.ResourceVersion,
+				RemoteArbiterLookupLabel:          s.remoteArbiter.Name,
 			},
 			Finalizers: []string{RemoteArbiterFinalizer},
 		},
@@ -717,9 +739,9 @@ func (r *RemoteArbiterReconciler) createArbiterDeployment(ctx context.Context, s
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "arbiter-deployment-",
 			Namespace:    s.remoteCluster.Spec.Namespace,
-			Annotations: map[string]string{
-				RemoteArbiterResourceVersionAnnotation: s.monitorOverrideConfigMap.ResourceVersion,
-				RemoteArbiterLookupLabel:               s.remoteArbiter.Name,
+			Labels: map[string]string{
+				RemoteArbiterResourceVersionLabel: s.monitorOverrideConfigMap.ResourceVersion,
+				RemoteArbiterLookupLabel:          s.remoteArbiter.Name,
 			},
 			Finalizers: []string{RemoteArbiterFinalizer},
 		},
@@ -978,6 +1000,10 @@ func (r *RemoteArbiterReconciler) fetchRemoteCluster(ctx context.Context, s *Rem
 }
 
 func (r *RemoteArbiterReconciler) createRemoteCluster(ctx context.Context, remoteArbiter *v1alpha1.RemoteArbiter) (*v1alpha1.RemoteCluster, error) {
+	if remoteArbiter.Spec.RemoteCluster.Spec == nil {
+		return nil, errors.New("remote cluster spec is nil")
+	}
+
 	gvk, err := r.GroupVersionKindFor(remoteArbiter)
 	if err != nil {
 		return nil, err
@@ -995,7 +1021,7 @@ func (r *RemoteArbiterReconciler) createRemoteCluster(ctx context.Context, remot
 				*ownerRef,
 			},
 		},
-		Spec: remoteArbiter.Spec.RemoteCluster.Spec,
+		Spec: *remoteArbiter.Spec.RemoteCluster.Spec,
 	}
 
 	if err := r.Create(ctx, remoteCluster); err != nil {
@@ -1079,8 +1105,8 @@ func (r *RemoteArbiterReconciler) cleanUpRemoteCluster(ctx context.Context, s *R
 		return err
 	}
 
-	s.remoteClusterObjectKey = ObjectKeyFromObject(s.remoteCluster)
 	s.remoteCluster = remoteCluster
+	s.remoteClusterObjectKey = ObjectKeyFromObject(s.remoteCluster)
 
 	s.log.Info("remote cluster fetched", RemoteClusterTypeName, s.remoteClusterObjectKey)
 
@@ -1162,9 +1188,9 @@ func (r *RemoteArbiterReconciler) checkStatusInitialized(ctx context.Context, s 
 		v1alpha1.CephClusterExistsConditionType,
 		v1alpha1.CephClusterReadyConditionType,
 		v1alpha1.CephClusterConfiguredConditionType,
-		v1alpha1.MonotorDeploymentExistsConditionType,
-		v1alpha1.MonotorDeploymentReadyConditionType,
-		v1alpha1.ArbiterDeploymentrExistsConditionType,
+		v1alpha1.MonitorDeploymentExistsConditionType,
+		v1alpha1.MonitorDeploymentReadyConditionType,
+		v1alpha1.ArbiterDeploymentExistsConditionType,
 		v1alpha1.ArbiterDeploymentReadyConditionType,
 	}
 

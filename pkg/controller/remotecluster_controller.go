@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -77,7 +78,10 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			}
 		}
 
-		// TODO do not allow to delete secret until arbiter finalizer is finished
+		if controllerutil.ContainsFinalizer(remoteCluster, RemoteArbiterFinalizer) {
+			log.Info("remote arbiter clean up is not complete, will retry later")
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
 
 		if controllerutil.ContainsFinalizer(remoteCluster, RemoteClusterFinalizer) {
 			secret := &corev1.Secret{}
@@ -91,7 +95,7 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				if controllerutil.ContainsFinalizer(secret, RemoteClusterFinalizer) {
 					updated := controllerutil.RemoveFinalizer(secret, RemoteClusterFinalizer)
 					if updated {
-						err := r.Update(ctx, remoteCluster)
+						err := r.Update(ctx, secret)
 						if err != nil {
 							log.Error(err, "unable to update resource after finalizer removal", SecretTypeName, secretObjectKey)
 							return ctrl.Result{}, err
@@ -167,7 +171,7 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	secret := &corev1.Secret{}
 	err = r.Get(ctx, secretObjectKey, secret)
 	if err != nil {
-		log.Error(err, "unable to ger referred resource", SecretTypeName, secretObjectKey)
+		log.Error(err, "unable to get referred resource", SecretTypeName, secretObjectKey)
 
 		remoteCluster.Status.State = v1alpha1.RemoteClusterErrorState
 		remoteCluster.Status.Message = err.Error()

@@ -11,7 +11,6 @@ import (
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -33,57 +32,33 @@ var _ = Describe("RemoteCluster Controller", func() {
 			Namespace: namespaceName,
 		}
 
-		BeforeEach(func() {
-			remoteCluster := &v1alpha1.RemoteCluster{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      remoteClusterNamespacedName.Name,
-					Namespace: remoteClusterNamespacedName.Namespace,
+		refRemoteCluster := &v1alpha1.RemoteCluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      remoteClusterNamespacedName.Name,
+				Namespace: remoteClusterNamespacedName.Namespace,
+			},
+			Spec: v1alpha1.RemoteClusterSpec{
+				Namespace: ArbiterInstallationNamespaceName,
+				AccessKeyRef: v1alpha1.KubeconfigSecretSource{
+					Name: secretNamespacedName.Name,
+					Key:  "kubeconfig.yaml",
 				},
-				Spec: v1alpha1.RemoteClusterSpec{
-					Namespace: ArbiterInstallationNamespaceName,
-					AccessKeyRef: v1alpha1.KubeconfigSecretSource{
-						Name: secretNamespacedName.Name,
-						Key:  "kubeconfig.yaml",
-					},
-				},
-			}
-			err := sourceK8sClient.Create(ctx, remoteCluster)
-			Expect(err).NotTo(HaveOccurred())
-		})
+			},
+		}
 
 		AfterEach(func() {
-			secretList := &corev1.SecretList{}
-			err := sourceK8sClient.List(ctx, secretList, &client.ListOptions{Namespace: namespaceName})
+			clusterTypes := []client.Object{
+				&corev1.Secret{},
+				&v1alpha1.RemoteCluster{},
+			}
+			err := namespaceCleanUp(sourceK8sClient, clusterTypes, namespaceName)
 			Expect(err).NotTo(HaveOccurred())
 
-			for _, item := range secretList.Items {
-				if len(item.GetFinalizers()) == 0 {
-					continue
-				}
-
-				item.SetFinalizers([]string{})
-				err := sourceK8sClient.Update(ctx, &item)
-				Expect(err).NotTo(HaveOccurred())
-
-				err = sourceK8sClient.Delete(ctx, &item)
-				Expect(err).NotTo(HaveOccurred())
-			}
-
-			clusterList := &v1alpha1.RemoteClusterList{}
-			err = sourceK8sClient.List(ctx, clusterList, &client.ListOptions{Namespace: namespaceName})
-			Expect(err).NotTo(HaveOccurred())
-			for _, item := range clusterList.Items {
-				if len(item.GetFinalizers()) == 0 {
-					continue
-				}
-
-				item.SetFinalizers([]string{})
-				err := sourceK8sClient.Update(ctx, &item)
-				Expect(err).NotTo(HaveOccurred())
-
-				err = sourceK8sClient.Delete(ctx, &item)
-				Expect(err).NotTo(HaveOccurred())
-			}
+			Eventually(func(g Gomega) {
+				empty, err := namespaceEmpty(sourceK8sClient, clusterTypes, namespaceName)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(empty).To(BeTrue())
+			}, Timeout, Interval).Should(Succeed())
 		})
 
 		It("Should fail to get secret", func() {
@@ -94,30 +69,23 @@ var _ = Describe("RemoteCluster Controller", func() {
 				v1alpha1.HasEnoughPermissionsConditionType: metav1.ConditionUnknown,
 			}
 
-			remoteClusterReconciler := &RemoteClusterReconciler{
-				Client: sourceK8sClient,
-				Scheme: sourceK8sClient.Scheme(),
-			}
+			remoteCluster := refRemoteCluster.DeepCopy()
+			err := sourceK8sClient.Create(ctx, remoteCluster)
 
-			_, err := remoteClusterReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: remoteClusterNamespacedName,
-			})
-			Expect(err).To(HaveOccurred())
-
-			remoteCluster := &v1alpha1.RemoteCluster{}
-			err = sourceK8sClient.Get(ctx, remoteClusterNamespacedName, remoteCluster)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(remoteCluster.Status.State).To(Equal(v1alpha1.RemoteClusterErrorState))
-			Expect(remoteCluster.Status.Message).NotTo(BeEmpty())
-			Expect(remoteCluster.Status.Conditions).To(HaveLen(len(conditionsMap)))
-			for _, condition := range remoteCluster.Status.Conditions {
-				expectedCondition := conditionsMap[condition.Type]
-				Expect(condition.Status).To(Equal(expectedCondition))
-				if expectedCondition == metav1.ConditionFalse {
-					Expect(condition.Message).NotTo(BeEmpty())
+			Eventually(func(g Gomega) {
+				err = sourceK8sClient.Get(ctx, remoteClusterNamespacedName, remoteCluster)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(remoteCluster.Status.State).To(Equal(v1alpha1.RemoteClusterErrorState))
+				g.Expect(remoteCluster.Status.Message).NotTo(BeEmpty())
+				g.Expect(remoteCluster.Status.Conditions).To(HaveLen(len(conditionsMap)))
+				for _, condition := range remoteCluster.Status.Conditions {
+					expectedCondition := conditionsMap[condition.Type]
+					g.Expect(condition.Status).To(Equal(expectedCondition))
+					if expectedCondition == metav1.ConditionFalse {
+						g.Expect(condition.Message).NotTo(BeEmpty())
+					}
 				}
-			}
+			}, Timeout, Interval).Should(Succeed())
 		})
 
 		It("Should fail to find key secret", func() {
@@ -141,30 +109,23 @@ var _ = Describe("RemoteCluster Controller", func() {
 			err := sourceK8sClient.Create(ctx, secret)
 			Expect(err).NotTo(HaveOccurred())
 
-			remoteClusterReconciler := &RemoteClusterReconciler{
-				Client: sourceK8sClient,
-				Scheme: sourceK8sClient.Scheme(),
-			}
+			remoteCluster := refRemoteCluster.DeepCopy()
+			err = sourceK8sClient.Create(ctx, remoteCluster)
 
-			_, err = remoteClusterReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: remoteClusterNamespacedName,
-			})
-			Expect(err).To(HaveOccurred())
-
-			remoteCluster := &v1alpha1.RemoteCluster{}
-			err = sourceK8sClient.Get(ctx, remoteClusterNamespacedName, remoteCluster)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(remoteCluster.Status.State).To(Equal(v1alpha1.RemoteClusterErrorState))
-			Expect(remoteCluster.Status.Message).NotTo(BeEmpty())
-			Expect(remoteCluster.Status.Conditions).To(HaveLen(len(conditionsMap)))
-			for _, condition := range remoteCluster.Status.Conditions {
-				expectedCondition := conditionsMap[condition.Type]
-				Expect(condition.Status).To(Equal(expectedCondition))
-				if expectedCondition == metav1.ConditionFalse {
-					Expect(condition.Message).NotTo(BeEmpty())
+			Eventually(func(g Gomega) {
+				err = sourceK8sClient.Get(ctx, remoteClusterNamespacedName, remoteCluster)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(remoteCluster.Status.State).To(Equal(v1alpha1.RemoteClusterErrorState))
+				g.Expect(remoteCluster.Status.Message).NotTo(BeEmpty())
+				g.Expect(remoteCluster.Status.Conditions).To(HaveLen(len(conditionsMap)))
+				for _, condition := range remoteCluster.Status.Conditions {
+					expectedCondition := conditionsMap[condition.Type]
+					g.Expect(condition.Status).To(Equal(expectedCondition))
+					if expectedCondition == metav1.ConditionFalse {
+						g.Expect(condition.Message).NotTo(BeEmpty())
+					}
 				}
-			}
+			}, Timeout, Interval).Should(Succeed())
 		})
 
 		It("Should fail to parse secret", func() {
@@ -188,30 +149,23 @@ var _ = Describe("RemoteCluster Controller", func() {
 			err := sourceK8sClient.Create(ctx, secret)
 			Expect(err).NotTo(HaveOccurred())
 
-			remoteClusterReconciler := &RemoteClusterReconciler{
-				Client: sourceK8sClient,
-				Scheme: sourceK8sClient.Scheme(),
-			}
+			remoteCluster := refRemoteCluster.DeepCopy()
+			err = sourceK8sClient.Create(ctx, remoteCluster)
 
-			_, err = remoteClusterReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: remoteClusterNamespacedName,
-			})
-			Expect(err).To(HaveOccurred())
-
-			remoteCluster := &v1alpha1.RemoteCluster{}
-			err = sourceK8sClient.Get(ctx, remoteClusterNamespacedName, remoteCluster)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(remoteCluster.Status.State).To(Equal(v1alpha1.RemoteClusterErrorState))
-			Expect(remoteCluster.Status.Message).NotTo(BeEmpty())
-			Expect(remoteCluster.Status.Conditions).To(HaveLen(len(conditionsMap)))
-			for _, condition := range remoteCluster.Status.Conditions {
-				expectedCondition := conditionsMap[condition.Type]
-				Expect(condition.Status).To(Equal(expectedCondition))
-				if expectedCondition == metav1.ConditionFalse {
-					Expect(condition.Message).NotTo(BeEmpty())
+			Eventually(func(g Gomega) {
+				err = sourceK8sClient.Get(ctx, remoteClusterNamespacedName, remoteCluster)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(remoteCluster.Status.State).To(Equal(v1alpha1.RemoteClusterErrorState))
+				g.Expect(remoteCluster.Status.Message).NotTo(BeEmpty())
+				g.Expect(remoteCluster.Status.Conditions).To(HaveLen(len(conditionsMap)))
+				for _, condition := range remoteCluster.Status.Conditions {
+					expectedCondition := conditionsMap[condition.Type]
+					g.Expect(condition.Status).To(Equal(expectedCondition))
+					if expectedCondition == metav1.ConditionFalse {
+						g.Expect(condition.Message).NotTo(BeEmpty())
+					}
 				}
-			}
+			}, Timeout, Interval).Should(Succeed())
 		})
 
 		It("Should fail to check readiness", func() {
@@ -222,15 +176,15 @@ var _ = Describe("RemoteCluster Controller", func() {
 				v1alpha1.HasEnoughPermissionsConditionType: metav1.ConditionUnknown,
 			}
 
-			freePort, err := FreePort()
+			freePort, err := freePort()
 			Expect(err).NotTo(HaveOccurred())
 
 			kubeconfigBytes, err := noPermissionsUser.KubeConfig()
 			Expect(err).NotTo(HaveOccurred())
-			// re, err := regexp.Compile("^.*:([0-9]{1,5}).*$")
-			re, err := regexp.Compile("(.*:)[0-9]{1,5}(.*)")
+
+			replacePortRegexp, err := regexp.Compile("(.*:)[0-9]{1,5}(.*)")
 			Expect(err).NotTo(HaveOccurred())
-			modifiedKubeconfig := re.ReplaceAllString(string(kubeconfigBytes), fmt.Sprintf("${1}%d${2}", freePort))
+			modifiedKubeconfig := replacePortRegexp.ReplaceAllString(string(kubeconfigBytes), fmt.Sprintf("${1}%d${2}", freePort))
 
 			secret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
@@ -245,30 +199,23 @@ var _ = Describe("RemoteCluster Controller", func() {
 			err = sourceK8sClient.Create(ctx, secret)
 			Expect(err).NotTo(HaveOccurred())
 
-			remoteClusterReconciler := &RemoteClusterReconciler{
-				Client: sourceK8sClient,
-				Scheme: sourceK8sClient.Scheme(),
-			}
+			remoteCluster := refRemoteCluster.DeepCopy()
+			err = sourceK8sClient.Create(ctx, remoteCluster)
 
-			_, err = remoteClusterReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: remoteClusterNamespacedName,
-			})
-			Expect(err).To(HaveOccurred())
-
-			remoteCluster := &v1alpha1.RemoteCluster{}
-			err = sourceK8sClient.Get(ctx, remoteClusterNamespacedName, remoteCluster)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(remoteCluster.Status.State).To(Equal(v1alpha1.RemoteClusterErrorState))
-			Expect(remoteCluster.Status.Message).NotTo(BeEmpty())
-			Expect(remoteCluster.Status.Conditions).To(HaveLen(len(conditionsMap)))
-			for _, condition := range remoteCluster.Status.Conditions {
-				expectedCondition := conditionsMap[condition.Type]
-				Expect(condition.Status).To(Equal(expectedCondition))
-				if expectedCondition == metav1.ConditionFalse {
-					Expect(condition.Message).NotTo(BeEmpty())
+			Eventually(func(g Gomega) {
+				err = sourceK8sClient.Get(ctx, remoteClusterNamespacedName, remoteCluster)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(remoteCluster.Status.State).To(Equal(v1alpha1.RemoteClusterErrorState))
+				g.Expect(remoteCluster.Status.Message).NotTo(BeEmpty())
+				g.Expect(remoteCluster.Status.Conditions).To(HaveLen(len(conditionsMap)))
+				for _, condition := range remoteCluster.Status.Conditions {
+					expectedCondition := conditionsMap[condition.Type]
+					g.Expect(condition.Status).To(Equal(expectedCondition))
+					if expectedCondition == metav1.ConditionFalse {
+						g.Expect(condition.Message).NotTo(BeEmpty())
+					}
 				}
-			}
+			}, Timeout, Interval).Should(Succeed())
 		})
 
 		It("Should fail to validate permissions", func() {
@@ -295,30 +242,23 @@ var _ = Describe("RemoteCluster Controller", func() {
 			err = sourceK8sClient.Create(ctx, secret)
 			Expect(err).NotTo(HaveOccurred())
 
-			remoteClusterReconciler := &RemoteClusterReconciler{
-				Client: sourceK8sClient,
-				Scheme: sourceK8sClient.Scheme(),
-			}
+			remoteCluster := refRemoteCluster.DeepCopy()
+			err = sourceK8sClient.Create(ctx, remoteCluster)
 
-			_, err = remoteClusterReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: remoteClusterNamespacedName,
-			})
-			Expect(err).To(HaveOccurred())
-
-			remoteCluster := &v1alpha1.RemoteCluster{}
-			err = sourceK8sClient.Get(ctx, remoteClusterNamespacedName, remoteCluster)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(remoteCluster.Status.State).To(Equal(v1alpha1.RemoteClusterErrorState))
-			Expect(remoteCluster.Status.Message).NotTo(BeEmpty())
-			Expect(remoteCluster.Status.Conditions).To(HaveLen(len(conditionsMap)))
-			for _, condition := range remoteCluster.Status.Conditions {
-				expectedCondition := conditionsMap[condition.Type]
-				Expect(condition.Status).To(Equal(expectedCondition))
-				if expectedCondition == metav1.ConditionFalse {
-					Expect(condition.Message).NotTo(BeEmpty())
+			Eventually(func(g Gomega) {
+				err = sourceK8sClient.Get(ctx, remoteClusterNamespacedName, remoteCluster)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(remoteCluster.Status.State).To(Equal(v1alpha1.RemoteClusterErrorState))
+				g.Expect(remoteCluster.Status.Message).NotTo(BeEmpty())
+				g.Expect(remoteCluster.Status.Conditions).To(HaveLen(len(conditionsMap)))
+				for _, condition := range remoteCluster.Status.Conditions {
+					expectedCondition := conditionsMap[condition.Type]
+					g.Expect(condition.Status).To(Equal(expectedCondition))
+					if expectedCondition == metav1.ConditionFalse {
+						g.Expect(condition.Message).NotTo(BeEmpty())
+					}
 				}
-			}
+			}, Timeout, Interval).Should(Succeed())
 		})
 
 		It("Should be ready", func() {
@@ -345,30 +285,23 @@ var _ = Describe("RemoteCluster Controller", func() {
 			err = sourceK8sClient.Create(ctx, secret)
 			Expect(err).NotTo(HaveOccurred())
 
-			remoteClusterReconciler := &RemoteClusterReconciler{
-				Client: sourceK8sClient,
-				Scheme: sourceK8sClient.Scheme(),
-			}
+			remoteCluster := refRemoteCluster.DeepCopy()
+			err = sourceK8sClient.Create(ctx, remoteCluster)
 
-			_, err = remoteClusterReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: remoteClusterNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			remoteCluster := &v1alpha1.RemoteCluster{}
-			err = sourceK8sClient.Get(ctx, remoteClusterNamespacedName, remoteCluster)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(remoteCluster.Status.State).To(Equal(v1alpha1.RemoteClusterReadyState))
-			Expect(remoteCluster.Status.Message).NotTo(BeEmpty())
-			Expect(remoteCluster.Status.Conditions).To(HaveLen(len(conditionsMap)))
-			for _, condition := range remoteCluster.Status.Conditions {
-				expectedCondition := conditionsMap[condition.Type]
-				Expect(condition.Status).To(Equal(expectedCondition))
-				if expectedCondition == metav1.ConditionFalse {
-					Expect(condition.Message).NotTo(BeEmpty())
+			Eventually(func(g Gomega) {
+				err = sourceK8sClient.Get(ctx, remoteClusterNamespacedName, remoteCluster)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(remoteCluster.Status.State).To(Equal(v1alpha1.RemoteClusterReadyState))
+				g.Expect(remoteCluster.Status.Message).NotTo(BeEmpty())
+				g.Expect(remoteCluster.Status.Conditions).To(HaveLen(len(conditionsMap)))
+				for _, condition := range remoteCluster.Status.Conditions {
+					expectedCondition := conditionsMap[condition.Type]
+					g.Expect(condition.Status).To(Equal(expectedCondition))
+					if expectedCondition == metav1.ConditionFalse {
+						g.Expect(condition.Message).NotTo(BeEmpty())
+					}
 				}
-			}
+			}, Timeout, Interval).Should(Succeed())
 		})
 	})
 })

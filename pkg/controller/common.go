@@ -47,7 +47,7 @@ func ObjectKeyFromObject(obj client.Object) *types.NamespacedName {
 func NewInitCondition(aType string, msg string) metav1.Condition {
 	return metav1.Condition{
 		Type:    aType,
-		Status:  metav1.ConditionTrue,
+		Status:  metav1.ConditionUnknown,
 		Reason:  ReasonInit,
 		Message: msg,
 	}
@@ -65,7 +65,7 @@ func NewOKCondition(aType string, msg string) metav1.Condition {
 func NewErrorCondition(aType string, msg string) metav1.Condition {
 	return metav1.Condition{
 		Type:    aType,
-		Status:  metav1.ConditionTrue,
+		Status:  metav1.ConditionFalse,
 		Reason:  ReasonError,
 		Message: msg,
 	}

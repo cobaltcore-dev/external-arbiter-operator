@@ -9,15 +9,15 @@ import (
 )
 
 const (
-	RemoteClusterExistsConditionType      = "RemoteClusterExists"
-	RemoteClusterReadyConditionType       = "RemoteClusterReady"
-	CephClusterExistsConditionType        = "CephClusterExists"
-	CephClusterReadyConditionType         = "CephClusterReady"
-	CephClusterConfiguredConditionType    = "CephClusterConfigured"
-	MonotorDeploymentExistsConditionType  = "MonitorDeploymentExists"
-	MonotorDeploymentReadyConditionType   = "MonitorDeploymentReady"
-	ArbiterDeploymentrExistsConditionType = "ArbiterDeploymentExists"
-	ArbiterDeploymentReadyConditionType   = "ArbiterDeploymentReady"
+	RemoteClusterExistsConditionType     = "RemoteClusterExists"
+	RemoteClusterReadyConditionType      = "RemoteClusterReady"
+	CephClusterExistsConditionType       = "CephClusterExists"
+	CephClusterReadyConditionType        = "CephClusterReady"
+	CephClusterConfiguredConditionType   = "CephClusterConfigured"
+	MonitorDeploymentExistsConditionType = "MonitorDeploymentExists"
+	MonitorDeploymentReadyConditionType  = "MonitorDeploymentReady"
+	ArbiterDeploymentExistsConditionType = "ArbiterDeploymentExists"
+	ArbiterDeploymentReadyConditionType  = "ArbiterDeploymentReady"
 
 	RemoteArbiterInitState        RemoteArbiterState = "Init"
 	RemoteArbiterProgressingState RemoteArbiterState = "Progressing"
@@ -47,9 +47,9 @@ type PodConfiguration struct {
 // +kubebuilder:validation:ExactlyOneOf=name;spec
 type RemoteClusterConfiguration struct {
 	// +optional
-	Name string `json:"name,omitempty"`
+	Spec *RemoteClusterSpec `json:"spec,omitempty"`
 	// +optional
-	Spec RemoteClusterSpec `json:"spec,omitempty"`
+	Name string `json:"name,omitempty"`
 }
 
 // RemoteArbiterSpec defines the desired state of RemoteArbiter
@@ -59,6 +59,9 @@ type RemoteArbiterSpec struct {
 	Deployment PodConfiguration `json:"deployment,omitempty"`
 
 	// +required
+	RemoteCluster RemoteClusterConfiguration `json:"remoteCluster,omitempty"`
+
+	// +required
 	CephCluster NamespacedReference `json:"cephCluster,omitempty"`
 
 	// +default="ext-"
@@ -66,8 +69,6 @@ type RemoteArbiterSpec struct {
 	// +optional
 	MonIDPrefix string `json:"monIdPrefix,omitempty"`
 
-	// +required
-	RemoteCluster RemoteClusterConfiguration `json:"remoteCluster,omitempty"`
 	// +default="1m"
 	// +example="1m"
 	// +optional
@@ -90,6 +91,10 @@ type RemoteArbiterStatus struct {
 
 // RemoteArbiter is the Schema for the remotearbiters API
 type RemoteArbiter struct {
+
+	// spec defines the desired state of RemoteArbiter
+	// +required
+	Spec            RemoteArbiterSpec `json:"spec"`
 	metav1.TypeMeta `json:",inline"`
 
 	// metadata is a standard object metadata
@@ -99,10 +104,6 @@ type RemoteArbiter struct {
 	// status defines the observed state of RemoteArbiter
 	// +optional
 	Status RemoteArbiterStatus `json:"status,omitempty,omitzero"`
-
-	// spec defines the desired state of RemoteArbiter
-	// +required
-	Spec RemoteArbiterSpec `json:"spec"`
 }
 
 // +kubebuilder:object:root=true
