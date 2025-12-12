@@ -27,8 +27,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	"github.com/go-logr/logr"
-
 	"github.com/cobaltcore-dev/external-arbiter-operator/pkg/api/arbiter/v1alpha1"
 )
 
@@ -145,12 +143,7 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		existingConition := meta.FindStatusCondition(remoteCluster.Status.Conditions, conditionType)
 		if existingConition == nil {
 			log.Info("condition not present, initializing", "condition", conditionType)
-			condition := metav1.Condition{
-				Type:    conditionType,
-				Status:  metav1.ConditionUnknown,
-				Reason:  ReasonInit,
-				Message: "init",
-			}
+			condition := NewInitCondition(conditionType, "init")
 			_ = meta.SetStatusCondition(&remoteCluster.Status.Conditions, condition)
 		}
 	}
@@ -173,17 +166,8 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err != nil {
 		log.Error(err, "unable to get referred resource", SecretTypeName, secretObjectKey)
 
-		remoteCluster.Status.State = v1alpha1.RemoteClusterErrorState
-		remoteCluster.Status.Message = err.Error()
-
-		condition := metav1.Condition{
-			Type:    v1alpha1.ConfigAvailableConditionType,
-			Status:  metav1.ConditionFalse,
-			Reason:  ReasonError,
-			Message: err.Error(),
-		}
-
-		if err := r.updateRemoteClusterCondition(ctx, log, remoteCluster, condition); err != nil {
+		if err := r.updateRemoteClusterStatusOnFailure(ctx, remoteCluster,
+			v1alpha1.ConfigAvailableConditionType, err); err != nil {
 			log.Error(err, "unable to update resource with conditions")
 			return ctrl.Result{}, err
 		}
@@ -208,17 +192,8 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		err := fmt.Errorf("secret key %s not found", remoteCluster.Spec.AccessKeyRef.Key)
 		log.Error(err, "unable to get secret key", SecretTypeName, secretObjectKey, "key", remoteCluster.Spec.AccessKeyRef.Key)
 
-		remoteCluster.Status.State = v1alpha1.RemoteClusterErrorState
-		remoteCluster.Status.Message = err.Error()
-
-		condition := metav1.Condition{
-			Type:    v1alpha1.ConfigAvailableConditionType,
-			Status:  metav1.ConditionFalse,
-			Reason:  ReasonError,
-			Message: err.Error(),
-		}
-
-		if err := r.updateRemoteClusterCondition(ctx, log, remoteCluster, condition); err != nil {
+		if err := r.updateRemoteClusterStatusOnFailure(ctx, remoteCluster,
+			v1alpha1.ConfigAvailableConditionType, err); err != nil {
 			log.Error(err, "unable to update resource with conditions")
 			return ctrl.Result{}, err
 		}
@@ -229,17 +204,8 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	statusMessage := "config is present"
 	log.Info(statusMessage)
 
-	remoteCluster.Status.State = v1alpha1.RemoteClusterProgressingState
-	remoteCluster.Status.Message = statusMessage
-
-	condition := metav1.Condition{
-		Type:    v1alpha1.ConfigAvailableConditionType,
-		Status:  metav1.ConditionTrue,
-		Reason:  ReasonOK,
-		Message: statusMessage,
-	}
-
-	if err := r.updateRemoteClusterCondition(ctx, log, remoteCluster, condition); err != nil {
+	if err := r.updateRemoteClusterStatusOnSuccess(ctx, remoteCluster,
+		v1alpha1.RemoteClusterProgressingState, v1alpha1.ConfigAvailableConditionType, statusMessage); err != nil {
 		log.Error(err, "unable to update resource with conditions")
 		return ctrl.Result{}, err
 	}
@@ -248,17 +214,8 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err != nil {
 		log.Error(err, "unable to build client config", SecretTypeName, secretObjectKey, "key", remoteCluster.Spec.AccessKeyRef.Key)
 
-		remoteCluster.Status.State = v1alpha1.RemoteClusterErrorState
-		remoteCluster.Status.Message = err.Error()
-
-		condition := metav1.Condition{
-			Type:    v1alpha1.ConvigValidConditionType,
-			Status:  metav1.ConditionFalse,
-			Reason:  ReasonError,
-			Message: err.Error(),
-		}
-
-		if err := r.updateRemoteClusterCondition(ctx, log, remoteCluster, condition); err != nil {
+		if err := r.updateRemoteClusterStatusOnFailure(ctx, remoteCluster,
+			v1alpha1.ConvigValidConditionType, err); err != nil {
 			log.Error(err, "unable to update resource with conditions")
 			return ctrl.Result{}, err
 		}
@@ -272,17 +229,8 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err != nil {
 		log.Error(err, "unable to initialize client", SecretTypeName, secretObjectKey, "key", remoteCluster.Spec.AccessKeyRef.Key)
 
-		remoteCluster.Status.State = v1alpha1.RemoteClusterErrorState
-		remoteCluster.Status.Message = err.Error()
-
-		condition := metav1.Condition{
-			Type:    v1alpha1.ConvigValidConditionType,
-			Status:  metav1.ConditionFalse,
-			Reason:  ReasonError,
-			Message: err.Error(),
-		}
-
-		if err := r.updateRemoteClusterCondition(ctx, log, remoteCluster, condition); err != nil {
+		if err := r.updateRemoteClusterStatusOnFailure(ctx, remoteCluster,
+			v1alpha1.ConvigValidConditionType, err); err != nil {
 			log.Error(err, "unable to update resource with conditions")
 			return ctrl.Result{}, err
 		}
@@ -293,17 +241,8 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	statusMessage = "client initialized, config is valid"
 	log.Info(statusMessage)
 
-	remoteCluster.Status.State = v1alpha1.RemoteClusterProgressingState
-	remoteCluster.Status.Message = statusMessage
-
-	condition = metav1.Condition{
-		Type:    v1alpha1.ConvigValidConditionType,
-		Status:  metav1.ConditionTrue,
-		Reason:  ReasonOK,
-		Message: statusMessage,
-	}
-
-	if err := r.updateRemoteClusterCondition(ctx, log, remoteCluster, condition); err != nil {
+	if err := r.updateRemoteClusterStatusOnSuccess(ctx, remoteCluster,
+		v1alpha1.RemoteClusterProgressingState, v1alpha1.ConvigValidConditionType, statusMessage); err != nil {
 		log.Error(err, "unable to update resource with conditions")
 		return ctrl.Result{}, err
 	}
@@ -312,17 +251,8 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err != nil {
 		log.Error(err, "unable to check cluster readiness")
 
-		remoteCluster.Status.State = v1alpha1.RemoteClusterErrorState
-		remoteCluster.Status.Message = err.Error()
-
-		condition := metav1.Condition{
-			Type:    v1alpha1.ClusterReachableConditionType,
-			Status:  metav1.ConditionFalse,
-			Reason:  ReasonError,
-			Message: err.Error(),
-		}
-
-		if err := r.updateRemoteClusterCondition(ctx, log, remoteCluster, condition); err != nil {
+		if err := r.updateRemoteClusterStatusOnFailure(ctx, remoteCluster,
+			v1alpha1.ClusterReachableConditionType, err); err != nil {
 			log.Error(err, "unable to update resource with conditions")
 			return ctrl.Result{}, err
 		}
@@ -335,17 +265,8 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		err := fmt.Errorf("cluster readiness response is %s", readinessResponse)
 		log.Error(err, "unable to validate cluster readiness")
 
-		remoteCluster.Status.State = v1alpha1.RemoteClusterErrorState
-		remoteCluster.Status.Message = err.Error()
-
-		condition := metav1.Condition{
-			Type:    v1alpha1.ClusterReachableConditionType,
-			Status:  metav1.ConditionFalse,
-			Reason:  ReasonError,
-			Message: err.Error(),
-		}
-
-		if err := r.updateRemoteClusterCondition(ctx, log, remoteCluster, condition); err != nil {
+		if err := r.updateRemoteClusterStatusOnFailure(ctx, remoteCluster,
+			v1alpha1.ClusterReachableConditionType, err); err != nil {
 			log.Error(err, "unable to update resource with conditions")
 			return ctrl.Result{}, err
 		}
@@ -356,17 +277,8 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	statusMessage = "cluster is ready"
 	log.Info(statusMessage)
 
-	remoteCluster.Status.State = v1alpha1.RemoteClusterProgressingState
-	remoteCluster.Status.Message = statusMessage
-
-	condition = metav1.Condition{
-		Type:    v1alpha1.ClusterReachableConditionType,
-		Status:  metav1.ConditionTrue,
-		Reason:  ReasonOK,
-		Message: statusMessage,
-	}
-
-	if err := r.updateRemoteClusterCondition(ctx, log, remoteCluster, condition); err != nil {
+	if err := r.updateRemoteClusterStatusOnSuccess(ctx, remoteCluster,
+		v1alpha1.RemoteClusterProgressingState, v1alpha1.ClusterReachableConditionType, statusMessage); err != nil {
 		log.Error(err, "unable to update resource with conditions")
 		return ctrl.Result{}, err
 	}
@@ -379,17 +291,8 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		if err != nil {
 			log.Error(err, "unable to perform permission evaluation")
 
-			remoteCluster.Status.State = v1alpha1.RemoteClusterErrorState
-			remoteCluster.Status.Message = err.Error()
-
-			condition := metav1.Condition{
-				Type:    v1alpha1.ClusterReachableConditionType,
-				Status:  metav1.ConditionFalse,
-				Reason:  ReasonError,
-				Message: err.Error(),
-			}
-
-			if err := r.updateRemoteClusterCondition(ctx, log, remoteCluster, condition); err != nil {
+			if err := r.updateRemoteClusterStatusOnFailure(ctx, remoteCluster,
+				v1alpha1.ClusterReachableConditionType, err); err != nil {
 				log.Error(err, "unable to update resource with conditions")
 				return ctrl.Result{}, err
 			}
@@ -423,17 +326,8 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		err := errors.Join(permissionEvalErrors...)
 		log.Error(err, "unable to perform permission evaluation")
 
-		remoteCluster.Status.State = v1alpha1.RemoteClusterErrorState
-		remoteCluster.Status.Message = err.Error()
-
-		condition := metav1.Condition{
-			Type:    v1alpha1.HasEnoughPermissionsConditionType,
-			Status:  metav1.ConditionFalse,
-			Reason:  ReasonError,
-			Message: err.Error(),
-		}
-
-		if err := r.updateRemoteClusterCondition(ctx, log, remoteCluster, condition); err != nil {
+		if err := r.updateRemoteClusterStatusOnFailure(ctx, remoteCluster,
+			v1alpha1.HasEnoughPermissionsConditionType, err); err != nil {
 			log.Error(err, "unable to update resource with conditions")
 			return ctrl.Result{}, err
 		}
@@ -444,17 +338,8 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	statusMessage = "cluster is ready and configured"
 	log.Info(statusMessage)
 
-	remoteCluster.Status.State = v1alpha1.RemoteClusterReadyState
-	remoteCluster.Status.Message = statusMessage
-
-	condition = metav1.Condition{
-		Type:    v1alpha1.HasEnoughPermissionsConditionType,
-		Status:  metav1.ConditionTrue,
-		Reason:  ReasonOK,
-		Message: "user has enough permissions",
-	}
-
-	if err := r.updateRemoteClusterCondition(ctx, log, remoteCluster, condition); err != nil {
+	if err := r.updateRemoteClusterStatusOnSuccess(ctx, remoteCluster,
+		v1alpha1.RemoteClusterReadyState, v1alpha1.HasEnoughPermissionsConditionType, statusMessage); err != nil {
 		log.Error(err, "unable to update resource with conditions")
 		return ctrl.Result{}, err
 	}
@@ -462,18 +347,70 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return ctrl.Result{RequeueAfter: remoteCluster.Spec.CheckInterval.Duration}, nil
 }
 
-func (r *RemoteClusterReconciler) updateRemoteClusterCondition(ctx context.Context, log logr.Logger, remoteCluster *v1alpha1.RemoteCluster, condition metav1.Condition) error {
-	if changed := meta.SetStatusCondition(&remoteCluster.Status.Conditions, condition); !changed {
-		log.Info("condition hasn't changed, nothing to update")
+// func (r *RemoteClusterReconciler) updateRemoteClusterCondition(ctx context.Context, log logr.Logger, remoteCluster *v1alpha1.RemoteCluster, condition metav1.Condition) error {
+// 	if changed := meta.SetStatusCondition(&remoteCluster.Status.Conditions, condition); !changed {
+// 		log.Info("condition hasn't changed, nothing to update")
+// 		return nil
+// 	}
+
+// 	if err := r.Status().Update(ctx, remoteCluster); err != nil {
+// 		log.Error(err, "failed to update resource status")
+// 		return err
+// 	}
+
+// 	return nil
+// }
+
+func (r *RemoteClusterReconciler) updateRemoteClusterStatusOnFailure(
+	ctx context.Context, remoteCluster *v1alpha1.RemoteCluster, conditionType string, err error) error {
+	statusMessage := err.Error()
+	stateSet := r.setRemoteClusterState(remoteCluster, v1alpha1.RemoteClusterErrorState, statusMessage)
+	condition := NewErrorCondition(conditionType, statusMessage)
+	conditionSet := r.setRemoteClusterCondition(remoteCluster, condition)
+	if !stateSet && !conditionSet {
 		return nil
 	}
-
 	if err := r.Status().Update(ctx, remoteCluster); err != nil {
-		log.Error(err, "failed to update resource status")
 		return err
 	}
 
 	return nil
+}
+
+func (r *RemoteClusterReconciler) updateRemoteClusterStatusOnSuccess(
+	ctx context.Context, remoteCluster *v1alpha1.RemoteCluster, state v1alpha1.RemoteClusterState, conditionType string, statusMessage string) error {
+	_ = r.setRemoteClusterState(remoteCluster, state, statusMessage)
+	condition := NewOKCondition(conditionType, statusMessage)
+	conditionSet := r.setRemoteClusterCondition(remoteCluster, condition)
+	if !conditionSet {
+		return nil
+	}
+	if err := r.Status().Update(ctx, remoteCluster); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *RemoteClusterReconciler) setRemoteClusterState(remoteCluster *v1alpha1.RemoteCluster, state v1alpha1.RemoteClusterState, message string) bool {
+	if remoteCluster.Status.State == state && remoteCluster.Status.Message == message {
+		return false
+	}
+
+	remoteCluster.Status.State = state
+	remoteCluster.Status.Message = message
+
+	return true
+}
+
+func (r *RemoteClusterReconciler) setRemoteClusterCondition(remoteCluster *v1alpha1.RemoteCluster, condition metav1.Condition) bool {
+	if meta.IsStatusConditionPresentAndEqual(remoteCluster.Status.Conditions, condition.Type, condition.Status) {
+		return false
+	}
+
+	_ = meta.SetStatusCondition(&remoteCluster.Status.Conditions, condition)
+
+	return true
 }
 
 func (r *RemoteClusterReconciler) getPermissionReviewRequests(namespace string) []*authorizationv1.SelfSubjectAccessReview {

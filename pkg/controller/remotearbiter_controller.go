@@ -41,8 +41,12 @@ const (
 
 	RemoteArbiterResourceVersionLabel = "ceph.cobaltcore.sap.com/last-applied-resource-version"
 	RemoteArbiterLookupLabel          = "ceph.cobaltcore.sap.com/lookup"
+	RemoteArbiterRoleLabel            = "ceph.cobaltcore.sap.com/roler"
 
 	RemoteClusterOwnerKey = ".remotecluster.owner"
+
+	RemoteArbiterKeyringRole = "keyring"
+	RemoteArbiterEnvVarRole  = "envvar"
 )
 
 var (
@@ -532,13 +536,13 @@ func (r *RemoteArbiterReconciler) makeDeploymentSpec(s *RemoteArbiterReconcilati
 		}
 	}
 
-	r.modifyContainers(spec.Template.Spec.Containers, monID)
-	r.modifyContainers(spec.Template.Spec.InitContainers, monID)
+	r.modifyContainers(spec.Template.Spec.Containers, monID, s.arbiterEnvVarSecret.Name)
+	r.modifyContainers(spec.Template.Spec.InitContainers, monID, s.arbiterEnvVarSecret.Name)
 
 	s.arbiterDeployment.Spec = *spec
 }
 
-func (r *RemoteArbiterReconciler) modifyContainers(containers []corev1.Container, monID string) {
+func (r *RemoteArbiterReconciler) modifyContainers(containers []corev1.Container, monID string, envVarSecretName string) {
 	for containerIdx := range containers {
 		volumeMounts := containers[containerIdx].VolumeMounts
 		for volumeMountIdx := range volumeMounts {
@@ -559,6 +563,17 @@ func (r *RemoteArbiterReconciler) modifyContainers(containers []corev1.Container
 			if strings.HasPrefix(args[argIdx], "--setuser-match-path=") {
 				args[argIdx] = fmt.Sprintf("--setuser-match-path=/var/lib/ceph/mon/ceph-%s/store.db", monID)
 			}
+		}
+
+		envVars := containers[containerIdx].Env
+		for envVarIdx := range envVars {
+			if envVars[envVarIdx].ValueFrom == nil {
+				continue
+			}
+			if envVars[envVarIdx].ValueFrom.SecretKeyRef == nil {
+				continue
+			}
+			envVars[envVarIdx].ValueFrom.SecretKeyRef.Name = envVarSecretName
 		}
 	}
 }
@@ -601,11 +616,17 @@ func (r *RemoteArbiterReconciler) fetchArbiterDeployment(ctx context.Context, s 
 	overrideConfigMapList := &corev1.ConfigMapList{}
 
 	namespaceSelector := client.InNamespace(s.remoteCluster.Spec.Namespace)
-	labelSelector := client.MatchingLabels{
+	arbiterLabelSelector := client.MatchingLabels{
 		RemoteArbiterLookupLabel: s.remoteArbiter.Name,
 	}
+	keyringRoleLabelSelector := client.MatchingLabels{
+		RemoteArbiterRoleLabel: RemoteArbiterKeyringRole,
+	}
+	envVarRoleLabelSelector := client.MatchingLabels{
+		RemoteArbiterRoleLabel: RemoteArbiterEnvVarRole,
+	}
 
-	if err := s.remoteClusterClient.List(ctx, keyringSecretList, namespaceSelector, labelSelector); err != nil {
+	if err := s.remoteClusterClient.List(ctx, keyringSecretList, namespaceSelector, arbiterLabelSelector, keyringRoleLabelSelector); err != nil {
 		return err
 	}
 	keyringSecretCount := len(keyringSecretList.Items)
@@ -621,7 +642,7 @@ func (r *RemoteArbiterReconciler) fetchArbiterDeployment(ctx context.Context, s 
 		return fmt.Errorf("expected to get 1 keyring secret, but got %d", keyringSecretCount)
 	}
 
-	if err := s.remoteClusterClient.List(ctx, envVarSecretList, namespaceSelector, labelSelector); err != nil {
+	if err := s.remoteClusterClient.List(ctx, envVarSecretList, namespaceSelector, arbiterLabelSelector, envVarRoleLabelSelector); err != nil {
 		return err
 	}
 	envVarSecretCount := len(envVarSecretList.Items)
@@ -637,10 +658,10 @@ func (r *RemoteArbiterReconciler) fetchArbiterDeployment(ctx context.Context, s 
 		return fmt.Errorf("expected to get 1 env var secret, but got %d", envVarSecretCount)
 	}
 
-	if err := s.remoteClusterClient.List(ctx, overrideConfigMapList, namespaceSelector, labelSelector); err != nil {
+	if err := s.remoteClusterClient.List(ctx, overrideConfigMapList, namespaceSelector, arbiterLabelSelector); err != nil {
 		return err
 	}
-	overrideConfigMapCount := len(keyringSecretList.Items)
+	overrideConfigMapCount := len(overrideConfigMapList.Items)
 	switch overrideConfigMapCount {
 	case 0:
 		if err := r.createArbiterOverrideConfigMap(ctx, s); err != nil {
@@ -653,7 +674,7 @@ func (r *RemoteArbiterReconciler) fetchArbiterDeployment(ctx context.Context, s 
 		return fmt.Errorf("expected to get 1 override config, but got %d", overrideConfigMapCount)
 	}
 
-	if err := s.remoteClusterClient.List(ctx, deploymentList, namespaceSelector, labelSelector); err != nil {
+	if err := s.remoteClusterClient.List(ctx, deploymentList, namespaceSelector, arbiterLabelSelector); err != nil {
 		return err
 	}
 	arbiterDeploymentCount := len(deploymentList.Items)
@@ -680,6 +701,7 @@ func (r *RemoteArbiterReconciler) createArbiterKeyringSecret(ctx context.Context
 			Labels: map[string]string{
 				RemoteArbiterResourceVersionLabel: s.monitorKeyringSecret.ResourceVersion,
 				RemoteArbiterLookupLabel:          s.remoteArbiter.Name,
+				RemoteArbiterRoleLabel:            RemoteArbiterKeyringRole,
 			},
 			Finalizers: []string{RemoteArbiterFinalizer},
 		},
@@ -703,6 +725,7 @@ func (r *RemoteArbiterReconciler) createArbiterEnvVarSecret(ctx context.Context,
 			Labels: map[string]string{
 				RemoteArbiterResourceVersionLabel: s.monitorEnvVarSecret.ResourceVersion,
 				RemoteArbiterLookupLabel:          s.remoteArbiter.Name,
+				RemoteArbiterRoleLabel:            RemoteArbiterEnvVarRole,
 			},
 			Finalizers: []string{RemoteArbiterFinalizer},
 		},
@@ -1266,9 +1289,13 @@ func (r *RemoteArbiterReconciler) getRemoteClusterByName(cxt context.Context, na
 func (r *RemoteArbiterReconciler) updateRemoteArbiterStatusOnFailure(
 	ctx context.Context, remoteArbiter *v1alpha1.RemoteArbiter, conditionType string, err error) error {
 	statusMessage := err.Error()
-	r.setRemoteArbiterState(remoteArbiter, v1alpha1.RemoteArbiterErrorState, statusMessage)
+	stateSet := r.setRemoteArbiterState(remoteArbiter, v1alpha1.RemoteArbiterErrorState, statusMessage)
 	condition := NewErrorCondition(conditionType, statusMessage)
-	if err := r.updateRemoteArbiterCondition(ctx, remoteArbiter, condition); err != nil {
+	conditionSet := r.setRemoteArbiterCondition(remoteArbiter, condition)
+	if !stateSet && !conditionSet {
+		return nil
+	}
+	if err := r.Status().Update(ctx, remoteArbiter); err != nil {
 		return err
 	}
 
@@ -1277,9 +1304,13 @@ func (r *RemoteArbiterReconciler) updateRemoteArbiterStatusOnFailure(
 
 func (r *RemoteArbiterReconciler) updateRemoteArbiterStatusOnSuccess(
 	ctx context.Context, remoteArbiter *v1alpha1.RemoteArbiter, state v1alpha1.RemoteArbiterState, conditionType string, statusMessage string) error {
-	r.setRemoteArbiterState(remoteArbiter, state, statusMessage)
+	_ = r.setRemoteArbiterState(remoteArbiter, state, statusMessage)
 	condition := NewOKCondition(conditionType, statusMessage)
-	if err := r.updateRemoteArbiterCondition(ctx, remoteArbiter, condition); err != nil {
+	conditionSet := r.setRemoteArbiterCondition(remoteArbiter, condition)
+	if !conditionSet {
+		return nil
+	}
+	if err := r.Status().Update(ctx, remoteArbiter); err != nil {
 		return err
 	}
 
@@ -1298,7 +1329,7 @@ func (r *RemoteArbiterReconciler) updateRemoteArbiterState(ctx context.Context, 
 }
 
 func (r *RemoteArbiterReconciler) setRemoteArbiterState(remoteArbiter *v1alpha1.RemoteArbiter, state v1alpha1.RemoteArbiterState, message string) bool {
-	if remoteArbiter.Status.State == state {
+	if remoteArbiter.Status.State == state && remoteArbiter.Status.Message == message {
 		return false
 	}
 
@@ -1308,16 +1339,16 @@ func (r *RemoteArbiterReconciler) setRemoteArbiterState(remoteArbiter *v1alpha1.
 	return true
 }
 
-func (r *RemoteArbiterReconciler) updateRemoteArbiterCondition(ctx context.Context, remoteArbiter *v1alpha1.RemoteArbiter, condition metav1.Condition) error {
-	if set := r.setRemoteArbiterCondition(remoteArbiter, condition); !set {
-		return nil
-	}
-	if err := r.Status().Update(ctx, remoteArbiter); err != nil {
-		return err
-	}
+// func (r *RemoteArbiterReconciler) updateRemoteArbiterCondition(ctx context.Context, remoteArbiter *v1alpha1.RemoteArbiter, condition metav1.Condition) error {
+// 	if set := r.setRemoteArbiterCondition(remoteArbiter, condition); !set {
+// 		return nil
+// 	}
+// 	if err := r.Status().Update(ctx, remoteArbiter); err != nil {
+// 		return err
+// 	}
 
-	return nil
-}
+// 	return nil
+// }
 
 func (r *RemoteArbiterReconciler) setRemoteArbiterCondition(remoteArbiter *v1alpha1.RemoteArbiter, condition metav1.Condition) bool {
 	if meta.IsStatusConditionPresentAndEqual(remoteArbiter.Status.Conditions, condition.Type, condition.Status) {

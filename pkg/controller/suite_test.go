@@ -224,32 +224,32 @@ var _ = BeforeSuite(func() {
 		},
 		Rules: []rbacv1.PolicyRule{
 			{
-				Verbs:     []string{"*"},
+				Verbs:     []string{"create", "delete", "get", "list", "patch", "update", "watch"},
 				APIGroups: []string{"apps"},
 				Resources: []string{"deployments"},
 			},
 			{
-				Verbs:     []string{"*"},
+				Verbs:     []string{"create", "delete", "get", "list", "patch", "update", "watch"},
 				APIGroups: []string{"apps"},
 				Resources: []string{"deployments/status"},
 			},
 			{
-				Verbs:     []string{"*"},
+				Verbs:     []string{"update"},
 				APIGroups: []string{"apps"},
 				Resources: []string{"deployments/finalizers"},
 			},
 			{
-				Verbs:     []string{"*"},
+				Verbs:     []string{"create", "delete", "get", "list", "patch", "update", "watch"},
 				APIGroups: []string{""},
 				Resources: []string{"configmaps", "secrets"},
 			},
 			{
-				Verbs:     []string{"*"},
+				Verbs:     []string{"create", "delete", "get", "list", "patch", "update", "watch"},
 				APIGroups: []string{""},
 				Resources: []string{"configmaps/status", "secrets/status"},
 			},
 			{
-				Verbs:     []string{"*"},
+				Verbs:     []string{"update"},
 				APIGroups: []string{""},
 				Resources: []string{"configmaps/finalizers", "secrets/finalizers"},
 			},
