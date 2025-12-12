@@ -29,6 +29,25 @@ rules:
   verbs:
   - update
 - apiGroups:
+  - apps
+  resources:
+  - deployments
+  - deployments/status
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments/finalizers
+  verbs:
+  - update
+- apiGroups:
   - ceph.cobaltcore.sap.com
   resources:
   - remotearbiters

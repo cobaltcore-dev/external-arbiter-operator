@@ -80,7 +80,8 @@ type RemoteClusterStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-
+// +kubebuilder:printcolumn:name="State",type=string,JSONPath=`.status.state`,description="State"
+// +kubebuilder:printcolumn:name="Message",type=string,JSONPath=`.status.message`,description="Message"
 // RemoteCluster is the Schema for the remotclusters API
 type RemoteCluster struct {
 	metav1.TypeMeta `json:",inline"`

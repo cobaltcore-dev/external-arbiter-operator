@@ -477,12 +477,12 @@ func (r *RemoteClusterReconciler) updateRemoteClusterCondition(ctx context.Conte
 }
 
 func (r *RemoteClusterReconciler) getPermissionReviewRequests(namespace string) []*authorizationv1.SelfSubjectAccessReview {
-	return []*authorizationv1.SelfSubjectAccessReview{
+	verbs := []string{"create", "delete", "get", "list", "patch", "update", "watch"}
+	reviewRequestTemplates := []*authorizationv1.SelfSubjectAccessReview{
 		{
 			Spec: authorizationv1.SelfSubjectAccessReviewSpec{
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Namespace: namespace,
-					Verb:      "*",
 					Resource:  "deployments",
 					Group:     "apps",
 					Version:   "v1",
@@ -492,32 +492,7 @@ func (r *RemoteClusterReconciler) getPermissionReviewRequests(namespace string) 
 		{
 			Spec: authorizationv1.SelfSubjectAccessReviewSpec{
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
-					Namespace:   namespace,
-					Verb:        "*",
-					Resource:    "deployments",
-					Group:       "apps",
-					Version:     "v1",
-					Subresource: "status",
-				},
-			},
-		},
-		{
-			Spec: authorizationv1.SelfSubjectAccessReviewSpec{
-				ResourceAttributes: &authorizationv1.ResourceAttributes{
-					Namespace:   namespace,
-					Verb:        "*",
-					Resource:    "deployments",
-					Group:       "apps",
-					Version:     "v1",
-					Subresource: "finalizers",
-				},
-			},
-		},
-		{
-			Spec: authorizationv1.SelfSubjectAccessReviewSpec{
-				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Namespace: namespace,
-					Verb:      "*",
 					Resource:  "secrets",
 					Group:     "",
 					Version:   "v1",
@@ -527,63 +502,35 @@ func (r *RemoteClusterReconciler) getPermissionReviewRequests(namespace string) 
 		{
 			Spec: authorizationv1.SelfSubjectAccessReviewSpec{
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
-					Namespace:   namespace,
-					Verb:        "*",
-					Resource:    "secrets",
-					Group:       "",
-					Version:     "v1",
-					Subresource: "status",
-				},
-			},
-		},
-		{
-			Spec: authorizationv1.SelfSubjectAccessReviewSpec{
-				ResourceAttributes: &authorizationv1.ResourceAttributes{
-					Namespace:   namespace,
-					Verb:        "*",
-					Resource:    "secrets",
-					Group:       "",
-					Version:     "v1",
-					Subresource: "finalizers",
-				},
-			},
-		},
-		{
-			Spec: authorizationv1.SelfSubjectAccessReviewSpec{
-				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Namespace: namespace,
-					Verb:      "*",
 					Resource:  "configmaps",
 					Group:     "",
 					Version:   "v1",
 				},
 			},
 		},
-		{
-			Spec: authorizationv1.SelfSubjectAccessReviewSpec{
-				ResourceAttributes: &authorizationv1.ResourceAttributes{
-					Namespace:   namespace,
-					Verb:        "*",
-					Resource:    "configmaps",
-					Group:       "",
-					Version:     "v1",
-					Subresource: "status",
-				},
-			},
-		},
-		{
-			Spec: authorizationv1.SelfSubjectAccessReviewSpec{
-				ResourceAttributes: &authorizationv1.ResourceAttributes{
-					Namespace:   namespace,
-					Verb:        "*",
-					Resource:    "configmaps",
-					Group:       "",
-					Version:     "v1",
-					Subresource: "finalizers",
-				},
-			},
-		},
 	}
+
+	reviewRequests := make([]*authorizationv1.SelfSubjectAccessReview, 0, len(reviewRequestTemplates)*(2*len(verbs)+1))
+	for _, reviewRequestTemplate := range reviewRequestTemplates {
+		for _, verb := range verbs {
+			resourceReviewRequest := reviewRequestTemplate.DeepCopy()
+			resourceReviewRequest.Spec.ResourceAttributes.Verb = verb
+
+			statusReviewRequest := reviewRequestTemplate.DeepCopy()
+			statusReviewRequest.Spec.ResourceAttributes.Verb = verb
+			statusReviewRequest.Spec.ResourceAttributes.Subresource = "status"
+
+			reviewRequests = append(reviewRequests, resourceReviewRequest, statusReviewRequest)
+		}
+
+		finalizerReviewRequest := reviewRequestTemplate.DeepCopy()
+		finalizerReviewRequest.Spec.ResourceAttributes.Verb = "update"
+		finalizerReviewRequest.Spec.ResourceAttributes.Subresource = "finalizers"
+		reviewRequests = append(reviewRequests, finalizerReviewRequest)
+	}
+
+	return reviewRequests
 }
 
 // SetupWithManager sets up the controller with the Manager.

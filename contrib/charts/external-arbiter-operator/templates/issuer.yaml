@@ -1,11 +1,13 @@
 # Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
 # SPDX-License-Identifier: Apache-2.0
 ---
+{{ if .Values.useCertManager }}
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
-  name: {{ include "chart.fullname" . }}-selfsigned-issuer
+  name: {{ .Release.Name }}-selfsigned-issuer
   labels:
-  {{- include "chart.labels" . | nindent 4 }}
+  {{- include "external-arbiter-operator.labels" . | nindent 4 }}
 spec:
   selfSigned: {}
+{{ end }}

@@ -1,0 +1,12 @@
+apiVersion: ceph.cobaltcore.sap.com/v1alpha1
+kind: RemoteArbiter
+metadata:
+  name: external-arbiter
+spec:
+  remoteCluster:
+    name: external-arbiter
+  cephCluster:
+    name: my-cluster
+    namespace: rook-ceph
+  monIdPrefix: "ext-"
+  checkInterval: 1m

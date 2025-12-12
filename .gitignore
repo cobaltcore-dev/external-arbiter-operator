@@ -32,3 +32,9 @@ build/
 # rook dependency
 rook/
 contrib/k8s/3rdparty
+
+# user creation keys and requests
+*.csr
+*.key
+*.crt
+*.kubeconfig

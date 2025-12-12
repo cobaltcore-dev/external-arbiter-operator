@@ -88,7 +88,9 @@ type RemoteArbiterStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-
+// +kubebuilder:printcolumn:name="Mon ID",type=string,JSONPath=`.status.monId`,description="State"
+// +kubebuilder:printcolumn:name="State",type=string,JSONPath=`.status.state`,description="State"
+// +kubebuilder:printcolumn:name="Message",type=string,JSONPath=`.status.message`,description="Message"
 // RemoteArbiter is the Schema for the remotearbiters API
 type RemoteArbiter struct {
 

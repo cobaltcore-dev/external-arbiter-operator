@@ -5,8 +5,8 @@ imagePullSecrets: []
 
 manager:
   image:
-    repository: localhost:5000/cobaltcore/external-arbiter-operator
-    pullPolicy: IfNotPresent
+    repository: localhost:5000/cobaltcore-dev/external-arbiter-operator
+    pullPolicy: Never
     tag: "latest"
   resources:
     limits:
@@ -17,6 +17,10 @@ manager:
       memory: 20Mi
   securityContext:
     allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - ALL
+    readOnlyRootFilesystem: true
 
 podAnnotations: {}
 
@@ -40,6 +44,10 @@ metricsService:
 webhookService:
   type: ClusterIP
   port: 443
+
+useNetworkPolicies: false
+useCertManager: true
+useMonitoring: false
 
 cluster:
   domain: cluster.local

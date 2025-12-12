@@ -1,13 +1,14 @@
 # Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
 # SPDX-License-Identifier: Apache-2.0
 ---
+{{ if .Values.useMonitoring }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: controller-manager-metrics-monitor
   labels:
     control-plane: controller-manager
-    {{- include "chart.labels" . | nindent 4 }}
+    {{- include "external-arbiter-operator.labels" . | nindent 4 }}
 spec:
   endpoints:
     - path: /metrics
@@ -15,7 +16,7 @@ spec:
       scheme: https
       bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
       tlsConfig:
-        serverName: {{ include "chart.fullname" . }}-controller-manager-metrics-service.{{ .Release.Namespace }}
+        serverName: {{ .Release.Name }}-controller-manager-metrics-service.{{ .Release.Namespace }}
         {{ if .Values.useCertManager }}
         insecureSkipVerify: false
         ca:
@@ -36,3 +37,4 @@ spec:
     matchLabels:
       control-plane: controller-manager
       app.kubernetes.io/name: kubesample
+{{ end }}

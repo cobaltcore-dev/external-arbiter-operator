@@ -17,8 +17,6 @@ portForwards:
   - guestPort: 80
     hostPort: 8080
     proto: tcp
-  - guestSocket: "/run/containerd/containerd.sock" 
-    hostSocket: "{{.Dir}}/sock/containerd.sock"
 images:
 - location: "https://cloud-images.ubuntu.com/releases/22.04/release-20240308/ubuntu-22.04-server-cloudimg-amd64.img"
   arch: "x86_64"
@@ -135,42 +133,6 @@ provision:
     mkdir -p {{.Home}}/.kube
     cp -f $KUBECONFIG {{.Home}}/.kube/config
     chown -R {{.User}} {{.Home}}/.kube
-- mode: system
-  script: |
-    #!/bin/bash
-    apt-get install -y wireguard
-    cd /etc/wireguard
-    wg genkey | tee server-privatekey | wg pubkey > server-publickey
-    wg genkey | tee client-privatekey | wg pubkey > client-publickey
-    SERVER_PRIVATE_KEY=$(cat server-privatekey)
-    SERVER_PUBLIC_KEY=$(cat server-publickey)
-    CLIENT_PRIVATE_KEY=$(cat client-privatekey)
-    CLIENT_PUBLIC_KEY=$(cat client-publickey)
-    cat <<EOF > wg0.conf
-    [Interface]
-    Address = 192.168.2.1/24
-    ListenPort = 51820
-    PrivateKey = $SERVER_PRIVATE_KEY
-    PostUp   = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT; iptables -t nat -A POSTROUTING -o cni0 -j MASQUERADE
-    PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT; iptables -t nat -D POSTROUTING -o cni0 -j MASQUERADE
-
-    [Peer]
-    PublicKey = $CLIENT_PUBLIC_KEY
-    AllowedIPs = 192.168.2.2/32
-    EOF
-    cat <<EOF > wg0-client.conf
-    [Interface]
-    Address = 192.168.2.2/32
-    PrivateKey = $CLIENT_PRIVATE_KEY
-
-    [Peer]
-    PublicKey = $SERVER_PUBLIC_KEY
-    Endpoint = 127.0.0.1:51820
-    AllowedIPs = 10.96.0.0/12, 10.244.0.0/16, 192.168.2.0/24, 192.168.5.0/24
-    EOF
-    systemctl enable wg-quick@wg0.service
-    systemctl daemon-reload
-    systemctl start wg-quick@wg0
 probes:
 - description: "kubeadm to be installed"
   script: |
@@ -209,9 +171,6 @@ copyToHost:
 - guest: "/etc/kubernetes/admin.conf"
   host: "{{.Dir}}/copied-from-guest/kubeconfig.yaml"
   deleteOnStop: true
-- guest: "/etc/wireguard/wg0-client.conf"
-  host: "{{.Dir}}/copied-from-guest/wg0.conf"
-  deleteOnStop: true
 message: |
   To run `kubectl` on the host (assumes kubectl is installed), run the following commands:
   ------
@@ -219,15 +178,3 @@ message: |
   kubectl ...
   ------
 
-  Use VM's containerd:
-  ------
-  nerdctl --address="{{.Dir}}/sock/containerd.sock"
-  ------
-
-  Access CNI network via Wireguard:
-  ------
-  # Connect to VPN
-  wg-quick up "{{.Dir}}/copied-from-guest/wg0.conf"
-  # Disconnect
-  wg-quick down "{{.Dir}}/copied-from-guest/wg0.conf"
-  ------

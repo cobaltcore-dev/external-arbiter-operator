@@ -4,9 +4,9 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "chart.fullname" . }}-metrics-auth-role
+  name: {{ .Release.Name }}-metrics-auth-role
   labels:
-    {{- include "chart.labels" . | nindent 4 }}
+    {{- include "external-arbiter-operator.labels" . | nindent 4 }}
 rules:
 - apiGroups:
   - authentication.k8s.io

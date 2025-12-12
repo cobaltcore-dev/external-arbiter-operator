@@ -4,10 +4,10 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "chart.fullname" . }}-controller-manager
+  name: {{ .Release.Name }}-controller-manager
   labels:
     control-plane: controller-manager
-  {{- include "chart.labels" . | nindent 4 }}
+  {{- include "external-arbiter-operator.labels" . | nindent 4 }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
@@ -15,7 +15,7 @@ spec:
   selector:
     matchLabels:
       control-plane: controller-manager
-      {{- include "chart.selectorLabels" . | nindent 6 }}
+      {{- include "external-arbiter-operator.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       {{- with .Values.podAnnotations }}
@@ -24,7 +24,7 @@ spec:
       {{- end }}
       labels:
         control-plane: controller-manager
-        {{- include "chart.selectorLabels" . | nindent 8 }}
+        {{- include "external-arbiter-operator.selectorLabels" . | nindent 8 }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -33,6 +33,7 @@ spec:
       containers:
         - name: manager
           image: "{{ .Values.manager.image.repository }}:{{ .Values.manager.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: "{{ .Values.manager.image.pullPolicy }}"
           args:
             - --metrics-bind-address=:8443
             - --leader-elect
@@ -74,7 +75,7 @@ spec:
           {{ end }}
       securityContext:
       {{- toYaml .Values.podSecurityContext | nindent 8 }}
-      serviceAccountName: kubesample-controller-manager
+      serviceAccountName: {{ .Release.Name }}-controller-manager
       terminationGracePeriodSeconds: 10
       {{ if .Values.useCertManager }}
       volumes:
@@ -88,8 +89,8 @@ spec:
             - key: tls.key
               path: tls.key
             optional: false
-            secretName: {{ include "chart.fullname" . }}-metrics-server-cert
+            secretName: {{ .Release.Name }}-metrics-server-cert
         - name: webhook-certs
           secret:
-            secretName: {{ include "chart.fullname" . }}-webhook-server-cert
+            secretName: {{ .Release.Name }}-webhook-server-cert
       {{ end }}

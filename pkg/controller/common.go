@@ -27,6 +27,9 @@ const (
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=secrets/status,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=secrets/finalizers,verbs=update
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments/status,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments/finalizers,verbs=update
 // +kubebuilder:rbac:groups=ceph.rook.io,resources=cephclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ceph.rook.io,resources=cephclusters/status,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ceph.rook.io,resources=cephclusters/finalizers,verbs=update

@@ -1,17 +1,19 @@
 # Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
 # SPDX-License-Identifier: Apache-2.0
 ---
+{{ if .Values.useCertManager }}
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ include "chart.fullname" . }}-metrics-cert
+  name: {{ .Release.Name }}-metrics-cert
   labels:
-  {{- include "chart.labels" . | nindent 4 }}
+  {{- include "external-arbiter-operator.labels" . | nindent 4 }}
 spec:
   dnsNames:
-    - {{ include "chart.fullname" . }}-metrics-service.{{ .Release.Namespace }}.svc
-    - {{ include "chart.fullname" . }}-metrics-service.{{ .Release.Namespace }}.svc.{{ .Values.cluster.domain }}
+    - {{ .Release.Name }}-metrics-service.{{ .Release.Namespace }}.svc
+    - {{ .Release.Name }}-metrics-service.{{ .Release.Namespace }}.svc.{{ .Values.cluster.domain }}
   issuerRef:
     kind: Issuer
-    name: {{ include "chart.fullname" . }}-selfsigned-issuer
-  secretName: {{ include "chart.fullname" . }}-metrics-server-cert
+    name: {{ .Release.Name }}-selfsigned-issuer
+  secretName: {{ .Release.Name }}-metrics-server-cert
+{{ end }}

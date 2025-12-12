@@ -1,0 +1,10 @@
+apiVersion: ceph.cobaltcore.sap.com/v1alpha1
+kind: RemoteCluster
+metadata:
+  name: external-arbiter
+spec:
+  namespace: external-arbiter
+  accesskeyRef:
+    name: external-arbiter
+    key: "kubeconfig.yaml"
+  checkInterval: 1m

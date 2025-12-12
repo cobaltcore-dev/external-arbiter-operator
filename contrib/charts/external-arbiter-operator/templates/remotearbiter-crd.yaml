@@ -16,7 +16,20 @@ spec:
     singular: remotearbiter
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - description: State
+      jsonPath: .status.monId
+      name: Mon ID
+      type: string
+    - description: State
+      jsonPath: .status.state
+      name: State
+      type: string
+    - description: Message
+      jsonPath: .status.message
+      name: Message
+      type: string
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: RemoteArbiter is the Schema for the remotearbiters API
@@ -974,6 +987,10 @@ spec:
                             x-kubernetes-list-type: atomic
                         type: object
                     type: object
+                  nodeSelector:
+                    additionalProperties:
+                      type: string
+                    type: object
                   resources:
                     description: ResourceRequirements describes the compute resource
                       requirements.
@@ -1035,6 +1052,9 @@ spec:
                         type: object
                     type: object
                 type: object
+              monIdPrefix:
+                default: ext-
+                type: string
               remoteCluster:
                 properties:
                   name:
@@ -1133,6 +1153,8 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               message:
+                type: string
+              monId:
                 type: string
               state:
                 type: string

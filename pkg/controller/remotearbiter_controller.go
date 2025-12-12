@@ -512,6 +512,7 @@ func (r *RemoteArbiterReconciler) makeDeploymentSpec(s *RemoteArbiterReconcilati
 	spec.Template.Spec.Affinity = s.remoteArbiter.Spec.Deployment.Affinity
 	spec.Template.Spec.Resources = s.remoteArbiter.Spec.Deployment.Resources
 
+	monID := s.remoteArbiter.Status.MonID
 	volumes := spec.Template.Spec.Volumes
 	volumesChanged := 0
 	for idx := range volumes {
@@ -522,14 +523,17 @@ func (r *RemoteArbiterReconciler) makeDeploymentSpec(s *RemoteArbiterReconcilati
 		case "rook-ceph-mons-keyring":
 			volumes[idx].Secret.SecretName = s.arbiterKeyringSecret.Name
 			volumesChanged++
+		case "ceph-daemon-data":
+			volumes[idx].HostPath.Path = fmt.Sprintf("/var/lib/rook/mon-%s/data", monID)
+			volumesChanged++
 		}
-		if volumesChanged == 2 {
+		if volumesChanged == 3 {
 			break
 		}
 	}
 
-	r.modifyContainers(spec.Template.Spec.Containers, s.remoteArbiter.Status.MonID)
-	r.modifyContainers(spec.Template.Spec.InitContainers, s.remoteArbiter.Status.MonID)
+	r.modifyContainers(spec.Template.Spec.Containers, monID)
+	r.modifyContainers(spec.Template.Spec.InitContainers, monID)
 
 	s.arbiterDeployment.Spec = *spec
 }
@@ -538,7 +542,7 @@ func (r *RemoteArbiterReconciler) modifyContainers(containers []corev1.Container
 	for containerIdx := range containers {
 		volumeMounts := containers[containerIdx].VolumeMounts
 		for volumeMountIdx := range volumeMounts {
-			if volumeMounts[volumeMountIdx].Name != "ceph-daemon-data" {
+			if volumeMounts[volumeMountIdx].Name == "ceph-daemon-data" {
 				volumeMounts[volumeMountIdx].MountPath = fmt.Sprintf("/var/lib/ceph/mon/ceph-%s", monID)
 				break
 			}
@@ -551,6 +555,9 @@ func (r *RemoteArbiterReconciler) modifyContainers(containers []corev1.Container
 			}
 			if strings.HasPrefix(args[argIdx], "/var/lib/ceph/mon/ceph-") {
 				args[argIdx] = fmt.Sprintf("/var/lib/ceph/mon/ceph-%s", monID)
+			}
+			if strings.HasPrefix(args[argIdx], "--setuser-match-path=") {
+				args[argIdx] = fmt.Sprintf("--setuser-match-path=/var/lib/ceph/mon/ceph-%s/store.db", monID)
 			}
 		}
 	}
@@ -758,8 +765,8 @@ func (r *RemoteArbiterReconciler) createArbiterDeployment(ctx context.Context, s
 
 func (r *RemoteArbiterReconciler) fetchMonitorDeployment(ctx context.Context, s *RemoteArbiterReconcilationState) error {
 	labelSelector := client.MatchingLabels{
-		"ceph_daemon_type": "mon",
-		"mon_cluster":      s.remoteArbiter.Spec.CephCluster.Name,
+		"ceph_daemon_type":          "mon",
+		"app.kubernetes.io/part-of": s.remoteArbiter.Spec.CephCluster.Name,
 	}
 	namespaceSelector := client.InNamespace(s.remoteArbiter.Spec.CephCluster.Namespace)
 

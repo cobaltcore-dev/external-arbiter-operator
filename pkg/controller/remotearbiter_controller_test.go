@@ -384,14 +384,9 @@ var _ = Describe("RemoteArbiter Controller", func() {
 
 			monitorDeployment := refMonitorDeployment.DeepCopy()
 			monitorDeployment.Namespace = cephClusterNamespacedName.Namespace
-			monitorDeployment.Labels["mon_cluster"] = cephClusterNamespacedName.Name
+			monitorDeployment.Labels["app.kubernetes.io/part-of"] = cephClusterNamespacedName.Name
 			err = sourceK8sClient.Create(ctx, monitorDeployment)
 			Expect(err).NotTo(HaveOccurred())
-
-			// monitorDeployment.Status.UpdatedReplicas = 0
-			// monitorDeployment.Status.Replicas = 1
-			// err = sourceK8sClient.Status().Update(ctx, monitorDeployment)
-			// Expect(err).NotTo(HaveOccurred())
 
 			cephCluster.Status.Phase = rookv1.ConditionReady
 			err = sourceK8sClient.Status().Update(ctx, cephCluster)
@@ -463,7 +458,7 @@ var _ = Describe("RemoteArbiter Controller", func() {
 
 			monitorDeployment := refMonitorDeployment.DeepCopy()
 			monitorDeployment.Namespace = cephClusterNamespacedName.Namespace
-			monitorDeployment.Labels["mon_cluster"] = cephClusterNamespacedName.Name
+			monitorDeployment.Labels["app.kubernetes.io/part-of"] = cephClusterNamespacedName.Name
 			err = sourceK8sClient.Create(ctx, monitorDeployment)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -542,7 +537,7 @@ var _ = Describe("RemoteArbiter Controller", func() {
 
 			monitorDeployment := refMonitorDeployment.DeepCopy()
 			monitorDeployment.Namespace = cephClusterNamespacedName.Namespace
-			monitorDeployment.Labels["mon_cluster"] = cephClusterNamespacedName.Name
+			monitorDeployment.Labels["app.kubernetes.io/part-of"] = cephClusterNamespacedName.Name
 			err = sourceK8sClient.Create(ctx, monitorDeployment)
 			Expect(err).NotTo(HaveOccurred())
 

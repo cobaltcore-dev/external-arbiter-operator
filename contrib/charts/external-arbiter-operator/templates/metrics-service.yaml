@@ -4,10 +4,10 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "chart.fullname" . }}-controller-manager-metrics-service
+  name: {{ .Release.Name}}-controller-manager-metrics-service
   labels:
     control-plane: controller-manager
-    {{- include "chart.labels" . | nindent 4 }}
+    {{- include "external-arbiter-operator.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.metricsService.type }}
   ports:
@@ -17,4 +17,4 @@ spec:
       targetPort: 8443
   selector:
     control-plane: controller-manager
-    {{- include "chart.selectorLabels" . | nindent 4 }}
+    {{- include "external-arbiter-operator.selectorLabels" . | nindent 4 }}
