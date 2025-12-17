@@ -39,7 +39,7 @@ limactl start k8s
 # use kubeconfig provided by vm
 export KUBECONFIG="${HOME}/.lima/k8s/copied-from-guest/kubeconfig.yaml"
 # install cert manager
-https://github.com/cert-manager/cert-manager/releases/download/v1.19.2/cert-manager.yaml
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.19.2/cert-manager.yaml
 # install rook operator
 kubectl apply -f ./rook/deploy/examples/crds.yaml
 kubectl apply -f ./rook/deploy/examples/common.yaml

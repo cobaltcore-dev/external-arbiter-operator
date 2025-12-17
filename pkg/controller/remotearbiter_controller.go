@@ -47,6 +47,9 @@ const (
 
 	RemoteArbiterKeyringRole = "keyring"
 	RemoteArbiterEnvVarRole  = "envvar"
+
+	RemoteArbiterMonMapVolumeName = "arbiter-monmap"
+	RemoteArbiterMonMapMountPath  = "/tmp/monmap"
 )
 
 var (
@@ -71,7 +74,9 @@ type RemoteArbiterReconcilationState struct {
 	// monitorOverrideConfigMapObjectKey *types.NamespacedName
 	monitorOverrideConfigMap *corev1.ConfigMap
 	// monitorEnvVarSecretObjectKey      *types.NamespacedName
-	monitorEnvVarSecret               *corev1.Secret
+	monitorEnvVarSecret *corev1.Secret
+	// arbiterServiceObjectKey           *types.NamespacedName
+	// arbiterService                    *corev1.Service
 	arbiterDeploymentObjectKey        *types.NamespacedName
 	arbiterDeployment                 *appsv1.Deployment
 	arbiterKeyringSecretObjectKey     *types.NamespacedName
@@ -498,7 +503,7 @@ func (r *RemoteArbiterReconciler) updateArbiterOverrideConfigMap(ctx context.Con
 	return nil
 }
 
-func (r *RemoteArbiterReconciler) makeDeploymentSpec(s *RemoteArbiterReconcilationState) {
+func (r *RemoteArbiterReconciler) makeDeploymentSpec(s *RemoteArbiterReconcilationState) error {
 	podLabels := map[string]string{
 		RemoteArbiterLookupLabel: s.remoteArbiter.Name,
 	}
@@ -536,10 +541,51 @@ func (r *RemoteArbiterReconciler) makeDeploymentSpec(s *RemoteArbiterReconcilati
 		}
 	}
 
+	monMapVolume := corev1.Volume{
+		Name: RemoteArbiterMonMapVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	}
+	volumes = append(volumes, monMapVolume)
+	spec.Template.Spec.Volumes = volumes
+
 	r.modifyContainers(spec.Template.Spec.Containers, monID, s.arbiterEnvVarSecret.Name)
 	r.modifyContainers(spec.Template.Spec.InitContainers, monID, s.arbiterEnvVarSecret.Name)
 
+	var image string
+	var fsid string
+	for _, container := range spec.Template.Spec.Containers {
+		if spec.Template.Spec.Containers[0].Name != "mon" {
+			continue
+		}
+		image = container.Image
+
+		fsidPrefix := "--fsid="
+		for _, arg := range container.Args {
+			if !strings.HasPrefix(arg, fsidPrefix) {
+				continue
+			}
+			fsid = strings.TrimPrefix(arg, fsidPrefix)
+			break
+		}
+
+		break
+	}
+
+	if fsid == "" {
+		return errors.New("unable to determine fsid")
+	}
+	if image == "" {
+		return errors.New("unable to determine image")
+	}
+
+	monMapInitContainer := r.getMonMapInitContainer(fsid, image, s.arbiterEnvVarSecret.Name)
+	spec.Template.Spec.InitContainers = append([]corev1.Container{*monMapInitContainer}, spec.Template.Spec.InitContainers...)
+
 	s.arbiterDeployment.Spec = *spec
+
+	return nil
 }
 
 func (r *RemoteArbiterReconciler) modifyContainers(containers []corev1.Container, monID string, envVarSecretName string) {
@@ -552,21 +598,50 @@ func (r *RemoteArbiterReconciler) modifyContainers(containers []corev1.Container
 			}
 		}
 
+		monMapVolumeMount := corev1.VolumeMount{
+			Name:      RemoteArbiterMonMapVolumeName,
+			MountPath: RemoteArbiterMonMapMountPath,
+		}
+		volumeMounts = append(volumeMounts, monMapVolumeMount)
+		containers[containerIdx].VolumeMounts = volumeMounts
+
 		args := containers[containerIdx].Args
 		for argIdx := range args {
-			if strings.HasPrefix(args[argIdx], "--id=") {
+			switch {
+			case strings.HasPrefix(args[argIdx], "--id="):
 				args[argIdx] = fmt.Sprintf("--id=%s", monID)
-			}
-			if strings.HasPrefix(args[argIdx], "/var/lib/ceph/mon/ceph-") {
+			case strings.HasPrefix(args[argIdx], "/var/lib/ceph/mon/ceph-"):
 				args[argIdx] = fmt.Sprintf("/var/lib/ceph/mon/ceph-%s", monID)
-			}
-			if strings.HasPrefix(args[argIdx], "--setuser-match-path=") {
+			case strings.HasPrefix(args[argIdx], "--setuser-match-path="):
 				args[argIdx] = fmt.Sprintf("--setuser-match-path=/var/lib/ceph/mon/ceph-%s/store.db", monID)
+			case strings.HasPrefix(args[argIdx], "--public-addr="):
+				args[argIdx] = "--public-addr=$(ROOK_POD_IP)"
 			}
 		}
 
+		args = slices.DeleteFunc(args, func(arg string) bool {
+			if strings.HasPrefix(arg, "--mon-host") {
+				return true
+			}
+			if strings.HasPrefix(arg, "--mon-initial-members") {
+				return true
+			}
+			return false
+		})
+
+		if containers[containerIdx].Name != "chown-container-data-dir" {
+			args = append(args, "--monmap=/tmp/monmap/ext.monmap")
+		}
+
+		containers[containerIdx].Args = args
+
+		hasPodIPEnvVar := false
 		envVars := containers[containerIdx].Env
 		for envVarIdx := range envVars {
+			if envVars[envVarIdx].Name == "ROOK_POD_IP" {
+				hasPodIPEnvVar = true
+			}
+
 			if envVars[envVarIdx].ValueFrom == nil {
 				continue
 			}
@@ -575,11 +650,86 @@ func (r *RemoteArbiterReconciler) modifyContainers(containers []corev1.Container
 			}
 			envVars[envVarIdx].ValueFrom.SecretKeyRef.Name = envVarSecretName
 		}
+
+		if hasPodIPEnvVar {
+			continue
+		}
+		podIPEnvVar := corev1.EnvVar{
+			Name: "ROOK_POD_IP",
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{
+					APIVersion: "v1",
+					FieldPath:  "status.podIP",
+				},
+			},
+		}
+		envVars = append(envVars, podIPEnvVar)
+		containers[containerIdx].Env = envVars
 	}
 }
 
+func (r *RemoteArbiterReconciler) getMonMapInitContainer(fsid string, image string, envVarSecretName string) *corev1.Container {
+	priviledged := false
+	container := &corev1.Container{
+		Name:            "init-monmap",
+		Image:           image,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{"monmaptool"},
+		Args: []string{
+			"--create",
+			"--clobber",
+			"--set-initial-members",
+			"--fsid",
+			fsid,
+			"--addv",
+			"$(ROOK_CEPH_MON_INITIAL_MEMBERS)",
+			"$(ROOK_CEPH_MON_HOST)",
+			"/tmp/monmap/ext.monmap",
+		},
+		Env: []corev1.EnvVar{
+			{
+				Name: "ROOK_CEPH_MON_HOST",
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						Key: "mon_host",
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: envVarSecretName,
+						},
+					},
+				},
+			},
+			{
+				Name: "ROOK_CEPH_MON_INITIAL_MEMBERS",
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						Key: "mon_initial_members",
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: envVarSecretName,
+						},
+					},
+				},
+			},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      RemoteArbiterMonMapVolumeName,
+				MountPath: RemoteArbiterMonMapMountPath,
+			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"NET_RAW"},
+			},
+			Privileged: &priviledged,
+		},
+	}
+	return container
+}
+
 func (r *RemoteArbiterReconciler) updateArbiterDeployment(ctx context.Context, s *RemoteArbiterReconcilationState) error {
-	r.makeDeploymentSpec(s)
+	if err := r.makeDeploymentSpec(s); err != nil {
+		return err
+	}
 
 	s.arbiterDeployment.Labels[RemoteArbiterResourceVersionLabel] = s.monitorDeployment.ResourceVersion
 	if s.arbiterDeployment.Spec.Template.Annotations == nil {
@@ -611,6 +761,7 @@ func (r *RemoteArbiterReconciler) restartArbiterDeployment(ctx context.Context, 
 
 func (r *RemoteArbiterReconciler) fetchArbiterDeployment(ctx context.Context, s *RemoteArbiterReconcilationState) error {
 	deploymentList := &appsv1.DeploymentList{}
+	// serviceList := &corev1.ServiceList{}
 	keyringSecretList := &corev1.SecretList{}
 	envVarSecretList := &corev1.SecretList{}
 	overrideConfigMapList := &corev1.ConfigMapList{}
@@ -673,6 +824,22 @@ func (r *RemoteArbiterReconciler) fetchArbiterDeployment(ctx context.Context, s 
 	default:
 		return fmt.Errorf("expected to get 1 override config, but got %d", overrideConfigMapCount)
 	}
+
+	// if err := s.remoteClusterClient.List(ctx, serviceList, namespaceSelector, arbiterLabelSelector); err != nil {
+	// 	return err
+	// }
+	// arbiterServiceCount := len(serviceList.Items)
+	// switch arbiterServiceCount {
+	// case 0:
+	// 	if err := r.createArbiterService(ctx, s); err != nil {
+	// 		return err
+	// 	}
+	// case 1:
+	// 	s.arbiterService = &serviceList.Items[0]
+	// 	s.arbiterServiceObjectKey = ObjectKeyFromObject(s.arbiterService)
+	// default:
+	// 	return fmt.Errorf("expected to get 1 service, but got %d", arbiterServiceCount)
+	// }
 
 	if err := s.remoteClusterClient.List(ctx, deploymentList, namespaceSelector, arbiterLabelSelector); err != nil {
 		return err
@@ -777,7 +944,9 @@ func (r *RemoteArbiterReconciler) createArbiterDeployment(ctx context.Context, s
 		},
 	}
 
-	r.makeDeploymentSpec(s)
+	if err := r.makeDeploymentSpec(s); err != nil {
+		return err
+	}
 
 	if err := s.remoteClusterClient.Create(ctx, s.arbiterDeployment); err != nil {
 		return err
@@ -785,6 +954,51 @@ func (r *RemoteArbiterReconciler) createArbiterDeployment(ctx context.Context, s
 
 	return nil
 }
+
+// func (r *RemoteArbiterReconciler) createArbiterService(ctx context.Context, s *RemoteArbiterReconcilationState) error {
+// 	trafficPolicy := corev1.ServiceInternalTrafficPolicyCluster
+// 	ipPolicy := corev1.IPFamilyPolicySingleStack
+
+// 	s.arbiterService = &corev1.Service{
+// 		ObjectMeta: metav1.ObjectMeta{
+// 			GenerateName: "arbiter-service-",
+// 			Namespace:    s.remoteCluster.Spec.Namespace,
+// 			Labels: map[string]string{
+// 				RemoteArbiterLookupLabel: s.remoteArbiter.Name,
+// 			},
+// 			Finalizers: []string{RemoteArbiterFinalizer},
+// 		},
+// 		Spec: corev1.ServiceSpec{
+// 			Ports: []corev1.ServicePort{
+// 				{
+// 					Name:       "tcp-msgr1",
+// 					Port:       6789,
+// 					Protocol:   corev1.ProtocolTCP,
+// 					TargetPort: intstr.FromInt32(6789),
+// 				},
+// 				{
+// 					Name:       "tcp-msgr2",
+// 					Port:       3300,
+// 					Protocol:   corev1.ProtocolTCP,
+// 					TargetPort: intstr.FromInt32(3300),
+// 				},
+// 			},
+// 			Selector: map[string]string{
+// 				RemoteArbiterLookupLabel: s.remoteArbiter.Name,
+// 			},
+// 			InternalTrafficPolicy: &trafficPolicy,
+// 			IPFamilies:            []corev1.IPFamily{corev1.IPv4Protocol},
+// 			IPFamilyPolicy:        &ipPolicy,
+// 			SessionAffinity:       corev1.ServiceAffinityNone,
+// 		},
+// 	}
+
+// 	if err := s.remoteClusterClient.Create(ctx, s.arbiterService); err != nil {
+// 		return err
+// 	}
+
+// 	return nil
+// }
 
 func (r *RemoteArbiterReconciler) fetchMonitorDeployment(ctx context.Context, s *RemoteArbiterReconcilationState) error {
 	labelSelector := client.MatchingLabels{
@@ -1012,6 +1226,17 @@ func (r *RemoteArbiterReconciler) fetchRemoteCluster(ctx context.Context, s *Rem
 		s.remoteCluster = remoteCluster
 		s.remoteClusterObjectKey = ObjectKeyFromObject(remoteCluster)
 		s.log.Info("remote cluster found", RemoteClusterTypeName, s.remoteClusterObjectKey)
+
+		added := controllerutil.AddFinalizer(s.remoteCluster, RemoteArbiterFinalizer)
+		if !added {
+			return nil
+		}
+
+		if err := r.Update(ctx, s.remoteCluster); err != nil {
+			s.log.Error(err, "unable to update resource with finalizer")
+			return err
+		}
+
 		return nil
 	}
 	s.log.Error(err, "remote cluster not found, will try to create")
@@ -1173,32 +1398,52 @@ func (r *RemoteArbiterReconciler) cleanUpArbiterDeployment(ctx context.Context, 
 		RemoteArbiterLookupLabel: s.remoteArbiter.Name,
 	}
 
-	objectList := &unstructured.UnstructuredList{}
-	if err := s.remoteClusterClient.List(ctx, objectList, namespaceSelector, labelSelector); err != nil {
-		s.log.Error(err, "unable to list remote resources", RemoteClusterTypeName, s.remoteClusterObjectKey)
-		return err
+	objectsToDelete := []client.Object{}
+	clusterTypes := []client.Object{
+		&corev1.Secret{},
+		&corev1.ConfigMap{},
+		&appsv1.Deployment{},
+	}
+	for _, clusterType := range clusterTypes {
+		gvk, err := r.GroupVersionKindFor(clusterType)
+		if err != nil {
+			s.log.Error(err, "unable to get resource gvk", RemoteClusterTypeName, s.remoteClusterObjectKey)
+			return err
+		}
+
+		objectList := &unstructured.UnstructuredList{}
+		objectList.SetGroupVersionKind(gvk)
+		err = r.List(ctx, objectList, namespaceSelector, labelSelector)
+		if err != nil {
+			s.log.Error(err, "unable to list remote resources", RemoteClusterTypeName, s.remoteClusterObjectKey)
+			return err
+		}
+
+		for _, item := range objectList.Items {
+			objectsToDelete = append(objectsToDelete, &item)
+		}
 	}
 
-	for _, object := range objectList.Items {
-		objectKey := ObjectKeyFromObject(&object)
-		gvk, err := r.GroupVersionKindFor(&object)
+	for _, object := range objectsToDelete {
+		objectKey := ObjectKeyFromObject(object)
+		gvk, err := r.GroupVersionKindFor(object)
 		if err != nil {
 			s.log.Error(err, "unable to get resource gvk", RemoteClusterTypeName, s.remoteClusterObjectKey, "key", objectKey)
 			return err
 		}
 
-		updated := controllerutil.RemoveFinalizer(&object, RemoteArbiterFinalizer)
+		updated := controllerutil.RemoveFinalizer(object, RemoteArbiterFinalizer)
 		if !updated {
 			s.log.Info("resource has no finalizer, continue", RemoteClusterTypeName, s.remoteClusterObjectKey, gvk, objectKey)
 			continue
 		}
 
-		if err := s.remoteClusterClient.Update(ctx, &object); err != nil {
+		if err := s.remoteClusterClient.Update(ctx, object); err != nil {
 			s.log.Error(err, "unable to update resource after finalizer removal", RemoteClusterTypeName, s.remoteClusterObjectKey, gvk, objectKey)
 			return err
 		}
 
-		if err := s.remoteClusterClient.Delete(ctx, &object); err != nil {
+		if err := s.remoteClusterClient.Delete(ctx, object); err != nil {
 			s.log.Error(err, "unable to delete resource after finalizer removal", RemoteClusterTypeName, s.remoteClusterObjectKey, gvk, objectKey)
 			return err
 		}
