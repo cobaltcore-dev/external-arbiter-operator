@@ -107,8 +107,8 @@ Deplmoyment manifests are managed by helm.
 
 Following examples are provided:
 - [secret.yaml](./contrib/k8s/examples/secret.yaml) for arbiter installation kubeconfig secret
-- [secret.yaml](./contrib/k8s/examples/remote-cluster.yaml) for RemoteCluster resource
-- [secret.yaml](./contrib/k8s/examples/remote-arbiter.yaml) for RemoteArbiter resource
+- [remote-cluster.yaml](./contrib/k8s/examples/remote-cluster.yaml) for RemoteCluster resource
+- [remote-arbiter.yaml](./contrib/k8s/examples/remote-arbiter.yaml) for RemoteArbiter resource
 
 ### How to run
 
