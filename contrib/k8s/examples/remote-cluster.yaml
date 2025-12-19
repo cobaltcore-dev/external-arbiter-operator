@@ -3,8 +3,13 @@ kind: RemoteCluster
 metadata:
   name: external-arbiter
 spec:
+  # target namespace to deploy arbiter
   namespace: external-arbiter
+  # reference to k8s secret with kubeconfig at the same namespace
   accesskeyRef:
+    # name of the secret
     name: external-arbiter
+    # key in provided secret
     key: "kubeconfig.yaml"
+  # interval between running cluster check
   checkInterval: 1m

@@ -24,6 +24,8 @@ const (
 	RemoteArbiterErrorState       RemoteArbiterState = "Error"
 	RemoteArbiterReadyState       RemoteArbiterState = "Ready"
 	RemoteArbiterDeletingState    RemoteArbiterState = "Deleting"
+
+	NamespacedReferenceSeparator = "/"
 )
 
 type RemoteArbiterState string
@@ -33,6 +35,10 @@ type NamespacedReference struct {
 	Namespace string `json:"namespace,omitempty"`
 	// +required
 	Name string `json:"name,omitempty"`
+}
+
+func (r NamespacedReference) String() string {
+	return r.Namespace + NamespacedReferenceSeparator + r.Name
 }
 
 type PodConfiguration struct {

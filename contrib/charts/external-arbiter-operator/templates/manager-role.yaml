@@ -9,91 +9,91 @@ metadata:
     {{- include "external-arbiter-operator.labels" . | nindent 4 }}
 rules:
 - apiGroups:
-  - ""
+    - ""
   resources:
-  - configmaps
-  - configmaps/status
-  - secrets
-  - secrets/status
+    - configmaps
+    - configmaps/status
+    - secrets
+    - secrets/status
   verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
+    - create
+    - delete
+    - get
+    - list
+    - patch
+    - update
+    - watch
 - apiGroups:
-  - ""
+    - ""
   resources:
-  - configmaps/finalizers
-  - secrets/finalizers
+    - configmaps/finalizers
+    - secrets/finalizers
   verbs:
-  - update
+    - update
 - apiGroups:
-  - ceph.cobaltcore.sap.com
+    - apps
   resources:
-  - remotearbiters
-  - remoteclusters
+    - deployments
+    - deployments/status
   verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
+    - create
+    - delete
+    - get
+    - list
+    - patch
+    - update
+    - watch
 - apiGroups:
-  - apps
+    - apps
   resources:
-  - deployments
-  - deployments/status
+    - deployments/finalizers
   verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
+    - update
 - apiGroups:
-  - apps
+    - ceph.cobaltcore.sap.com
   resources:
-  - deployments/finalizers
+    - remotearbiters
+    - remoteclusters
   verbs:
-  - update
+    - create
+    - delete
+    - get
+    - list
+    - patch
+    - update
+    - watch
 - apiGroups:
-  - ceph.cobaltcore.sap.com
+    - ceph.cobaltcore.sap.com
   resources:
-  - remotearbiters/finalizers
-  - remoteclusters/finalizers
+    - remotearbiters/finalizers
+    - remoteclusters/finalizers
   verbs:
-  - update
+    - update
 - apiGroups:
-  - ceph.cobaltcore.sap.com
+    - ceph.cobaltcore.sap.com
   resources:
-  - remotearbiters/status
-  - remoteclusters/status
+    - remotearbiters/status
+    - remoteclusters/status
   verbs:
-  - get
-  - patch
-  - update
+    - get
+    - patch
+    - update
 - apiGroups:
-  - ceph.rook.io
+    - ceph.rook.io
   resources:
-  - cephclusters
-  - cephclusters/status
+    - cephclusters
+    - cephclusters/status
   verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
+    - create
+    - delete
+    - get
+    - list
+    - patch
+    - update
+    - watch
 - apiGroups:
-  - ceph.rook.io
+    - ceph.rook.io
   resources:
-  - cephclusters/finalizers
+    - cephclusters/finalizers
   verbs:
-  - update
+    - update

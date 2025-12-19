@@ -18,9 +18,10 @@ gen:
 	go tool controller-gen rbac:roleName=manager-role,headerFile="./contrib/yaml-license-header.txt" crd:headerFile="./contrib/yaml-license-header.txt" webhook:headerFile="./contrib/yaml-license-header.txt" paths="./pkg/..." output:crd:artifacts:config=contrib/k8s/crd output:rbac:artifacts:config=contrib/k8s/rbac
 
 .PHONY: helm
-helm:
+helm: gen
 	cp contrib/k8s/crd/ceph.cobaltcore.sap.com_remotearbiters.yaml contrib/charts/external-arbiter-operator/templates/remotearbiter-crd.yaml
 	cp contrib/k8s/crd/ceph.cobaltcore.sap.com_remoteclusters.yaml contrib/charts/external-arbiter-operator/templates/remotecluster-crd.yaml
+	go tool yq '.rules' ./contrib/k8s/rbac/role.yaml -o y | { tmp=$$(mktemp) && (sed '/^rules:/q' ./contrib/charts/external-arbiter-operator/templates/manager-role.yaml; cat) > "$${tmp}" && mv "$${tmp}" ./contrib/charts/external-arbiter-operator/templates/manager-role.yaml; }
 
 .PHONY: vet
 vet:

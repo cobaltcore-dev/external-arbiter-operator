@@ -4,29 +4,37 @@
 # SPDX-License-Identifier: Apache-2.0
 -->
 
-# SAP Repository Template
-
-Default templates for SAP open source repositories, including LICENSE, .reuse/dep5, Code of Conduct, etc... All repositories on github.com/SAP will be created based on this template.
-
-## To-Do
-
-In case you are the maintainer of a new SAP open source project, these are the steps to do with the template files:
-
-- Check if the default license (Apache 2.0) also applies to your project. A license change should only be required in exceptional cases. If this is the case, please change the [license file](LICENSE).
-- Enter the correct metadata for the REUSE tool. See our [wiki page](https://wiki.one.int.sap/wiki/display/ospodocs/Using+the+Reuse+Tool+of+FSFE+for+Copyright+and+License+Information) for details how to do it. You can find an initial REUSE.toml file to build on. Please replace the parts inside the single angle quotation marks < > by the specific information for your repository and be sure to run the REUSE tool to validate that the metadata is correct.
-- Adjust the contribution guidelines (e.g. add coding style guidelines, pull request checklists, different license if needed etc.)
-- Add information about your project to this README (name, description, requirements etc). Especially take care for the <your-project> placeholders - those ones need to be replaced with your project name. See the sections below the horizontal line and [our guidelines on our wiki page](https://wiki.one.int.sap/wiki/pages/viewpage.action?pageId=3564976048#GuidelinesforGitHubHealthfiles(Readme,Contributing,CodeofConduct)-Readme.md) what is required and recommended.
-- Remove all content in this README above and including the horizontal line ;)
-
-***
-
-# Our new open source project
+# external-arbiter-operator
 
 ## About this project
 
-*Insert a short description of your project here...*
+external-arbiter-operator works with [rook](https://rook.io/)-provisioned ceph clusters and deploys 
+external, not managed by rook, arbiter (monitor), that participates in consensus.
+
+Operator also monitors remote cluster and checks whether cluster is available and tenant has enough
+permissions to handle arbiter deployment.
 
 ## Requirements and Setup
+
+### Required tools
+
+Following tools should be available on development machine
+- sed
+- openssl
+- make
+- git
+- golang
+- [lima](https://lima-vm.io/), or other way to provision k8s locally, like minikube
+- kubectl
+- docker, or any other compatible container engine, like podman
+- helm
+
+The rest is provisioned via `go tool`, including kubebuilder toolset.
+
+### Quick start
+
+A quick walkthrough on how to prepare environment, run operator locally and deploy external monitor.
+
 ```bash
 # clone rook repo if not yet done
 make deps
@@ -63,11 +71,61 @@ kubectl apply -f ./contrib/k8s/examples/secret.yaml -n arbiter-operator
 kubectl apply -f ./contrib/k8s/examples/remote-cluster.yaml -n arbiter-operator
 # create remote arbiter
 kubectl apply -f ./contrib/k8s/examples/remote-arbiter.yaml -n arbiter-operator
+# watch until arbiter ready
+kubectl get remotearbiter -n arbiter-operator -w
+# check arbiter joined quorum
+kubectl exec deployment/rook-ceph-tools -n rook-ceph -it -- ceph mon dump
 # stop vm
 limactl stop k8s
 # delete vm
 limactl delete k8s
 ```
+
+### Make goals
+
+Useful `make` commands 
+
+```bash
+# build binary 
+make
+# prettify project, run linters, etc.
+make pretty
+# run tests
+make test
+# regenerate k8s resources
+make gen 
+# copy CRD definitions to helm chart
+make helm
+```
+
+### How to configure deployment
+
+Deplmoyment manifests are managed by helm.
+[values.yaml](./contrib/charts/external-arbiter-operator/values.yaml) lists all possible configuration options.
+
+### How to configure resources
+
+Following examples are provided:
+- [secret.yaml](./contrib/k8s/examples/secret.yaml) for arbiter installation kubeconfig secret
+- [secret.yaml](./contrib/k8s/examples/remote-cluster.yaml) for RemoteCluster resource
+- [secret.yaml](./contrib/k8s/examples/remote-arbiter.yaml) for RemoteArbiter resource
+
+### How to run
+
+We assume that 
+- Ceph cluster operated by rook is already up and running on source k8s cluster
+- Resources (pods, services) from target (arbiter) cluster are reachable on source (operator/rook) cluster and vice versa
+
+1. Create user on target cluster
+2. Create target namespace on target cluster
+3. Grant user permissions to manage deployments, secrets, configmaps, their statuses and finalizers
+4. Provision target user kubeconfig on source cluster via secret
+5. Deploy operator on source cluster
+6. Create `RemoteCluster` resource on source cluster, referring target user kubeconfig secret
+7. Create `RemoteArbiter` resource on source cluster, referring `RemoteCluster`
+8. Watch until resources are ready
+9. Check that arbiter has joined quorum by dumping mon map with `ceph mon dump`
+
 ## Support, Feedback, Contributing
 
 This project is open to feature requests/suggestions, bug reports etc. via [GitHub issues](https://github.com/cobaltcore-dev/external-arbiter-operator/issues). Contribution and feedback are encouraged and always welcome. For more information about how to contribute, the project structure, as well as additional contribution information, see our [Contribution Guidelines](CONTRIBUTING.md).

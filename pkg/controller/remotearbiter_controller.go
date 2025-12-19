@@ -43,7 +43,9 @@ const (
 	RemoteArbiterLookupLabel          = "ceph.cobaltcore.sap.com/lookup"
 	RemoteArbiterRoleLabel            = "ceph.cobaltcore.sap.com/roler"
 
-	RemoteClusterOwnerKey = ".remotecluster.owner"
+	RemoteArbiterRemoteClusterKey = ".remotearbiter.remotecluster"
+	RemoteArbiterCephClusterKey   = ".remotearbiter.cephcluster"
+	RemoteClusterOwnerKey         = ".remotecluster.owner"
 
 	RemoteArbiterKeyringRole = "keyring"
 	RemoteArbiterEnvVarRole  = "envvar"
@@ -1620,23 +1622,45 @@ func (r *RemoteArbiterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &v1alpha1.RemoteArbiter{}, RemoteArbiterCephClusterKey, func(rawObj client.Object) []string {
+		remoteArbiter := rawObj.(*v1alpha1.RemoteArbiter)
+		cephClusterRef := remoteArbiter.Spec.CephCluster.String()
+		if cephClusterRef == "" {
+			return nil
+		}
+		return []string{cephClusterRef}
+	}); err != nil {
+		return err
+	}
+
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &v1alpha1.RemoteArbiter{}, RemoteArbiterRemoteClusterKey, func(rawObj client.Object) []string {
+		remoteArbiter := rawObj.(*v1alpha1.RemoteArbiter)
+		remoteClusterName := remoteArbiter.Spec.RemoteCluster.Name
+		if remoteClusterName == "" {
+			return nil
+		}
+		return []string{remoteClusterName}
+	}); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.RemoteArbiter{}).
 		Named(RemoteArbiterTypeName).
 		Owns(&v1alpha1.RemoteCluster{}).
 		Watches(
 			&corev1.Secret{},
-			handler.EnqueueRequestsFromMapFunc(r.findArbiterForSecret),
+			handler.EnqueueRequestsFromMapFunc(r.findArbiterForCephClusterOwnedObject),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
 		).
 		Watches(
 			&corev1.ConfigMap{},
-			handler.EnqueueRequestsFromMapFunc(r.findArbiterForConfigMap),
+			handler.EnqueueRequestsFromMapFunc(r.findArbiterForCephClusterOwnedObject),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
 		).
 		Watches(
 			&appsv1.Deployment{},
-			handler.EnqueueRequestsFromMapFunc(r.findArbiterForDeployment),
+			handler.EnqueueRequestsFromMapFunc(r.findArbiterForCephClusterOwnedObject),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
 		).
 		Watches(
@@ -1652,22 +1676,92 @@ func (r *RemoteArbiterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *RemoteArbiterReconciler) findArbiterForSecret(ctx context.Context, configMap client.Object) []reconcile.Request {
-	return nil
+func (r *RemoteArbiterReconciler) findArbiterForCephClusterOwnedObject(ctx context.Context, obj client.Object) []reconcile.Request {
+	owner := metav1.GetControllerOf(obj)
+	if owner == nil {
+		return nil
+	}
+	if owner.APIVersion != rookv1.SchemeGroupVersion.String() || owner.Kind != "CephCluster" {
+		return nil
+	}
+
+	cephClusterRef := v1alpha1.NamespacedReference{
+		Name:      owner.Name,
+		Namespace: obj.GetNamespace(),
+	}
+
+	return r.findArbiterForCephClusterRef(ctx, cephClusterRef)
 }
 
-func (r *RemoteArbiterReconciler) findArbiterForConfigMap(ctx context.Context, configMap client.Object) []reconcile.Request {
-	return nil
+func (r *RemoteArbiterReconciler) findArbiterForCephCluster(ctx context.Context, obj client.Object) []reconcile.Request {
+	cephClusterRef := v1alpha1.NamespacedReference{
+		Name:      obj.GetName(),
+		Namespace: obj.GetNamespace(),
+	}
+
+	return r.findArbiterForCephClusterRef(ctx, cephClusterRef)
 }
 
-func (r *RemoteArbiterReconciler) findArbiterForDeployment(ctx context.Context, configMap client.Object) []reconcile.Request {
-	return nil
+func (r *RemoteArbiterReconciler) findArbiterForCephClusterRef(ctx context.Context, ref v1alpha1.NamespacedReference) []reconcile.Request {
+	selector := client.MatchingFields{RemoteArbiterCephClusterKey: ref.String()}
+
+	arbiterList := &v1alpha1.RemoteArbiterList{}
+	if err := r.List(ctx, arbiterList, selector, client.InNamespace(corev1.NamespaceAll)); err != nil {
+		return nil
+	}
+
+	arbiterCount := len(arbiterList.Items)
+	if arbiterCount == 0 {
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0, arbiterCount)
+	for _, item := range arbiterList.Items {
+		request := reconcile.Request{
+			NamespacedName: *ObjectKeyFromObject(&item),
+		}
+		requests = append(requests, request)
+	}
+
+	return requests
 }
 
-func (r *RemoteArbiterReconciler) findArbiterForCephCluster(ctx context.Context, configMap client.Object) []reconcile.Request {
-	return nil
-}
+func (r *RemoteArbiterReconciler) findArbiterForRemoteCluster(ctx context.Context, obj client.Object) []reconcile.Request {
+	owner := metav1.GetControllerOf(obj)
+	if owner != nil {
+		if owner.APIVersion != v1alpha1.GroupVersion.String() || owner.Kind != "RemoteArbiter" {
+			return nil
+		}
 
-func (r *RemoteArbiterReconciler) findArbiterForRemoteCluster(ctx context.Context, configMap client.Object) []reconcile.Request {
-	return nil
+		return []reconcile.Request{
+			{
+				NamespacedName: types.NamespacedName{
+					Name:      owner.Name,
+					Namespace: obj.GetNamespace(),
+				},
+			},
+		}
+	}
+
+	selector := client.MatchingFields{RemoteArbiterRemoteClusterKey: obj.GetName()}
+
+	arbiterList := &v1alpha1.RemoteArbiterList{}
+	if err := r.List(ctx, arbiterList, selector, client.InNamespace(obj.GetNamespace())); err != nil {
+		return nil
+	}
+
+	arbiterCount := len(arbiterList.Items)
+	if arbiterCount == 0 {
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0, arbiterCount)
+	for _, item := range arbiterList.Items {
+		request := reconcile.Request{
+			NamespacedName: *ObjectKeyFromObject(&item),
+		}
+		requests = append(requests, request)
+	}
+
+	return requests
 }

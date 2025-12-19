@@ -3,10 +3,38 @@ kind: RemoteArbiter
 metadata:
   name: external-arbiter
 spec:
+  # remote cluster where arbiter will be deployed
   remoteCluster:
+    # name of remote cluster in the same namespace
     name: external-arbiter
+    # alternatively, a spec for remote cluster can be defined
+    # in this case, remote arbiter controller will take care of remote cluster creation
+    # spec:
+    #   # target namespace to deploy arbiter
+    #   namespace: external-arbiter
+    #   # reference to k8s secret with kubeconfig at the same namespace
+    #   accesskeyRef:
+    #     # name of the secret
+    #     name: external-arbiter
+    #     # key in provided secret
+    #     key: "kubeconfig.yaml"
+    #   # interval between running cluster check
+    #   checkInterval: 1m
+  # reference to rook-provisioned ceph cluster (CephCluster resource)
   cephCluster:
+    # name of CephCluster resource
     name: my-cluster
+    # namespace where CephCluster resource is located
     namespace: rook-ceph
+  # prefix that will be used to form wxternal monitor id, e.g. ext-a
   monIdPrefix: "ext-"
+  # pod configuration
+  # deployment:
+  #   # pod affinity rules
+  #   affinity:
+  #   # pod resource requirements and limits
+  #   resources:
+  #   # node selector
+  #   nodeSelector:
+  # interval to check remote arbiter health
   checkInterval: 1m

@@ -122,6 +122,7 @@ kind: Secret
 metadata:
   name: external-arbiter
 data:
+  # kubeconfig to access remote clustes
   kubeconfig.yaml: ${kubeconfig}
 EOF
 )
