@@ -37,4 +37,5 @@ spec:
   #   # node selector
   #   nodeSelector:
   # interval to check remote arbiter health
+  # 0 to disable
   checkInterval: 1m

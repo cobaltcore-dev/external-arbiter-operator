@@ -12,4 +12,5 @@ spec:
     # key in provided secret
     key: "kubeconfig.yaml"
   # interval between running cluster check
+  # 0 to disable
   checkInterval: 1m

@@ -15,7 +15,7 @@ tidy:
 .PHONY: gen
 gen:
 	go tool controller-gen object:headerFile="./contrib/go-license-header.txt" paths="./pkg/..."
-	go tool controller-gen rbac:roleName=manager-role,headerFile="./contrib/yaml-license-header.txt" crd:headerFile="./contrib/yaml-license-header.txt" webhook:headerFile="./contrib/yaml-license-header.txt" paths="./pkg/..." output:crd:artifacts:config=contrib/k8s/crd output:rbac:artifacts:config=contrib/k8s/rbac
+	go tool controller-gen rbac:roleName=manager-role,headerFile="./contrib/yaml-license-header.txt" crd:headerFile="./contrib/yaml-license-header.txt" webhook:headerFile="./contrib/yaml-license-header.txt" paths="./pkg/..." output:crd:artifacts:config="./contrib/k8s/crd" output:rbac:artifacts:config="./contrib/k8s/rbac" output:webhook:artifacts:config="./contrib/k8s/webhook"
 
 .PHONY: helm
 helm: gen
@@ -62,7 +62,7 @@ mkdir-build:
 %-bin: pretty mkdir-build
 	:
 
-.PHONY: manager
+.PHONY: operator
 operator: manager-bin
 	go build -ldflags="-X 'main.date=$(BUILD_DATE)' -X 'main.version=$(GIT_TAG)' -X 'main.commit=$(GIT_COMMIT)'" -o build/manager cmd/manager/main.go
 

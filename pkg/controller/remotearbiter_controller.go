@@ -41,7 +41,7 @@ const (
 
 	RemoteArbiterResourceVersionLabel = "ceph.cobaltcore.sap.com/last-applied-resource-version"
 	RemoteArbiterLookupLabel          = "ceph.cobaltcore.sap.com/lookup"
-	RemoteArbiterRoleLabel            = "ceph.cobaltcore.sap.com/roler"
+	RemoteArbiterRoleLabel            = "ceph.cobaltcore.sap.com/role"
 
 	RemoteArbiterRemoteClusterKey = ".remotearbiter.remotecluster"
 	RemoteArbiterCephClusterKey   = ".remotearbiter.cephcluster"
@@ -558,7 +558,7 @@ func (r *RemoteArbiterReconciler) makeDeploymentSpec(s *RemoteArbiterReconcilati
 	var image string
 	var fsid string
 	for _, container := range spec.Template.Spec.Containers {
-		if spec.Template.Spec.Containers[0].Name != "mon" {
+		if container.Name != "mon" {
 			continue
 		}
 		image = container.Image
@@ -671,7 +671,7 @@ func (r *RemoteArbiterReconciler) modifyContainers(containers []corev1.Container
 }
 
 func (r *RemoteArbiterReconciler) getMonMapInitContainer(fsid string, image string, envVarSecretName string) *corev1.Container {
-	priviledged := false
+	privileged := false
 	container := &corev1.Container{
 		Name:            "init-monmap",
 		Image:           image,
@@ -722,7 +722,7 @@ func (r *RemoteArbiterReconciler) getMonMapInitContainer(fsid string, image stri
 			Capabilities: &corev1.Capabilities{
 				Drop: []corev1.Capability{"NET_RAW"},
 			},
-			Privileged: &priviledged,
+			Privileged: &privileged,
 		},
 	}
 	return container
@@ -1167,7 +1167,7 @@ func (r *RemoteArbiterReconciler) fetchArbiter(ctx context.Context, s *RemoteArb
 }
 
 func (r *RemoteArbiterReconciler) checkSelfFinalizer(ctx context.Context, s *RemoteArbiterReconcilationState) error {
-	if controllerutil.ContainsFinalizer(s.remoteArbiter, RemoteClusterFinalizer) {
+	if controllerutil.ContainsFinalizer(s.remoteArbiter, RemoteArbiterFinalizer) {
 		s.log.Info("self finalizer exists, nothing to do")
 		return nil
 	}

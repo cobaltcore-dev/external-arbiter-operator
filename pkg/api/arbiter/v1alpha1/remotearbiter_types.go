@@ -64,21 +64,21 @@ type RemoteArbiterSpec struct {
 	// +optional
 	Deployment PodConfiguration `json:"deployment,omitempty"`
 
-	// +required
-	RemoteCluster RemoteClusterConfiguration `json:"remoteCluster,omitempty"`
+	// +default="1m"
+	// +example="1m"
+	// +optional
+	CheckInterval *Interval `json:"checkInterval,omitempty"`
 
 	// +required
 	CephCluster NamespacedReference `json:"cephCluster,omitempty"`
+
+	// +required
+	RemoteCluster RemoteClusterConfiguration `json:"remoteCluster,omitempty"`
 
 	// +default="ext-"
 	// +example="ext-"
 	// +optional
 	MonIDPrefix string `json:"monIdPrefix,omitempty"`
-
-	// +default="1m"
-	// +example="1m"
-	// +optional
-	CheckInterval Interval `json:"checkInterval,omitempty"`
 }
 
 // RemoteArbiterStatus defines the observed state of RemoteArbiter.
@@ -99,15 +99,15 @@ type RemoteArbiterStatus struct {
 // +kubebuilder:printcolumn:name="Message",type=string,JSONPath=`.status.message`,description="Message"
 // RemoteArbiter is the Schema for the remotearbiters API
 type RemoteArbiter struct {
-
-	// spec defines the desired state of RemoteArbiter
-	// +required
-	Spec            RemoteArbiterSpec `json:"spec"`
 	metav1.TypeMeta `json:",inline"`
 
 	// metadata is a standard object metadata
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty,omitzero"`
+
+	// spec defines the desired state of RemoteArbiter
+	// +required
+	Spec RemoteArbiterSpec `json:"spec"`
 
 	// status defines the observed state of RemoteArbiter
 	// +optional

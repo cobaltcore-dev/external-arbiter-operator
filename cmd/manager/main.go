@@ -12,10 +12,12 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
-	"github.com/cobaltcore-dev/external-arbiter-operator/pkg/api/arbiter/v1alpha1"
+	arbiterv1alpha1 "github.com/cobaltcore-dev/external-arbiter-operator/pkg/api/arbiter/v1alpha1"
 	"github.com/cobaltcore-dev/external-arbiter-operator/pkg/controller"
+	webhookv1alpha1 "github.com/cobaltcore-dev/external-arbiter-operator/pkg/webhook/v1alpha1"
 
 	rookv1 "github.com/rook/rook/pkg/apis/ceph.rook.io/v1"
+
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -39,7 +41,7 @@ var (
 
 func init() {
 	utilruntime.Must(rookv1.AddToScheme(scheme))
-	utilruntime.Must(v1alpha1.AddToScheme(scheme))
+	utilruntime.Must(arbiterv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
@@ -185,6 +187,18 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "RemoteCluster")
 		os.Exit(1)
 	}
+
+	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
+		if err := webhookv1alpha1.SetupRemoteClusterWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "RemoteCluster")
+			os.Exit(1)
+		}
+		if err := webhookv1alpha1.SetupRemoteArbiterWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "RemoteArbiter")
+			os.Exit(1)
+		}
+	}
+
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

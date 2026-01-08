@@ -12,7 +12,7 @@ import (
 
 const (
 	ConfigAvailableConditionType      = "ConfigAvailable"
-	ConvigValidConditionType          = "ConfigValid"
+	ConfigValidConditionType          = "ConfigValid"
 	ClusterReachableConditionType     = "ClusterReachable"
 	HasEnoughPermissionsConditionType = "HasEnoughPermissions"
 
@@ -26,9 +26,13 @@ const (
 type RemoteClusterState string
 
 type KubeconfigSecretSource struct {
-	// +required
+	// +optional
+	// +default="matches RemoteCluster name"
+	// +example="ceph-remote-cluster"
 	Name string `json:"name,omitempty"`
-	// +required
+	// +optional
+	// +default="kubeconfig.yaml"
+	// +example="kubeconfig.yaml"
 	Key string `json:"key,omitempty"`
 }
 
@@ -56,16 +60,16 @@ func (r *Interval) UnmarshalJSON(bytes []byte) error {
 
 // RemoteClusterSpec defines the desired state of RemoteCluster
 type RemoteClusterSpec struct {
+	// +default="1m"
+	// +example="1m"
+	// +optional
+	CheckInterval *Interval `json:"checkInterval,omitempty"`
+	// +optional
+	AccessKeyRef KubeconfigSecretSource `json:"accesskeyRef,omitempty"`
 	// +default="default"
 	// +example="default"
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
-	// +required
-	AccessKeyRef KubeconfigSecretSource `json:"accesskeyRef,omitempty"`
-	// +default="1m"
-	// +example="1m"
-	// +optional
-	CheckInterval Interval `json:"checkInterval,omitempty"`
 }
 
 // RemoteClusterStatus defines the observed state of RemoteCluster.

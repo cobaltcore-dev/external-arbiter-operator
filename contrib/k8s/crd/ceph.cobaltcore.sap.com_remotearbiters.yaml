@@ -1065,12 +1065,11 @@ spec:
                       accesskeyRef:
                         properties:
                           key:
+                            default: kubeconfig.yaml
                             type: string
                           name:
+                            default: matches RemoteCluster name
                             type: string
-                        required:
-                        - key
-                        - name
                         type: object
                       checkInterval:
                         default: 1m
@@ -1078,8 +1077,6 @@ spec:
                       namespace:
                         default: default
                         type: string
-                    required:
-                    - accesskeyRef
                     type: object
                 type: object
                 x-kubernetes-validations:

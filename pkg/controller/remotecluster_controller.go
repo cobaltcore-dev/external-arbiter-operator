@@ -134,7 +134,7 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	initialConditionsCount := len(remoteCluster.Status.Conditions)
 	conditionTypes := []string{
 		v1alpha1.ConfigAvailableConditionType,
-		v1alpha1.ConvigValidConditionType,
+		v1alpha1.ConfigValidConditionType,
 		v1alpha1.ClusterReachableConditionType,
 		v1alpha1.HasEnoughPermissionsConditionType,
 	}
@@ -215,7 +215,7 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		log.Error(err, "unable to build client config", SecretTypeName, secretObjectKey, "key", remoteCluster.Spec.AccessKeyRef.Key)
 
 		if err := r.updateRemoteClusterStatusOnFailure(ctx, remoteCluster,
-			v1alpha1.ConvigValidConditionType, err); err != nil {
+			v1alpha1.ConfigValidConditionType, err); err != nil {
 			log.Error(err, "unable to update resource with conditions")
 			return ctrl.Result{}, err
 		}
@@ -230,7 +230,7 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		log.Error(err, "unable to initialize client", SecretTypeName, secretObjectKey, "key", remoteCluster.Spec.AccessKeyRef.Key)
 
 		if err := r.updateRemoteClusterStatusOnFailure(ctx, remoteCluster,
-			v1alpha1.ConvigValidConditionType, err); err != nil {
+			v1alpha1.ConfigValidConditionType, err); err != nil {
 			log.Error(err, "unable to update resource with conditions")
 			return ctrl.Result{}, err
 		}
@@ -242,7 +242,7 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	log.Info(statusMessage)
 
 	if err := r.updateRemoteClusterStatusOnSuccess(ctx, remoteCluster,
-		v1alpha1.RemoteClusterProgressingState, v1alpha1.ConvigValidConditionType, statusMessage); err != nil {
+		v1alpha1.RemoteClusterProgressingState, v1alpha1.ConfigValidConditionType, statusMessage); err != nil {
 		log.Error(err, "unable to update resource with conditions")
 		return ctrl.Result{}, err
 	}
