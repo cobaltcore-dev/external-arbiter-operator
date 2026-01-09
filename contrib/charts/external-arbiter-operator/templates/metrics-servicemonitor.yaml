@@ -7,7 +7,7 @@ kind: ServiceMonitor
 metadata:
   name: controller-manager-metrics-monitor
   labels:
-    control-plane: controller-manager
+    control-plane: {{ .Release.Name }}-controller-manager
     {{- include "external-arbiter-operator.labels" . | nindent 4 }}
 spec:
   endpoints:
@@ -35,6 +35,6 @@ spec:
         {{ end }}
   selector:
     matchLabels:
-      control-plane: controller-manager
-      app.kubernetes.io/name: kubesample
+      control-plane: {{ .Release.Name }}-controller-manager
+      {{- include "external-arbiter-operator.selectorLabels" . | nindent 4 }}
 {{ end }}

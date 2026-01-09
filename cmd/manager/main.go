@@ -173,6 +173,18 @@ func main() {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
+
+	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
+		if err := webhookv1alpha1.SetupRemoteClusterWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "RemoteCluster")
+			os.Exit(1)
+		}
+		if err := webhookv1alpha1.SetupRemoteArbiterWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "RemoteArbiter")
+			os.Exit(1)
+		}
+	}
+
 	if err := (&controller.RemoteArbiterReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
@@ -186,17 +198,6 @@ func main() {
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RemoteCluster")
 		os.Exit(1)
-	}
-
-	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
-		if err := webhookv1alpha1.SetupRemoteClusterWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "unable to create webhook", "webhook", "RemoteCluster")
-			os.Exit(1)
-		}
-		if err := webhookv1alpha1.SetupRemoteArbiterWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "unable to create webhook", "webhook", "RemoteArbiter")
-			os.Exit(1)
-		}
 	}
 
 	// +kubebuilder:scaffold:builder

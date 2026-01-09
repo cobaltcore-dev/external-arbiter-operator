@@ -6,7 +6,7 @@ kind: Service
 metadata:
   name: {{ .Release.Name}}-controller-manager-metrics-service
   labels:
-    control-plane: controller-manager
+    control-plane: {{ .Release.Name }}-controller-manager
     {{- include "external-arbiter-operator.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.metricsService.type }}
@@ -16,5 +16,5 @@ spec:
       protocol: TCP
       targetPort: 8443
   selector:
-    control-plane: controller-manager
+    control-plane: {{ .Release.Name }}-controller-manager
     {{- include "external-arbiter-operator.selectorLabels" . | nindent 4 }}

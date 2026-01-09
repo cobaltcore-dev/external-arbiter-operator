@@ -75,6 +75,8 @@ kubectl apply -f ./contrib/k8s/examples/remote-arbiter.yaml -n arbiter-operator
 kubectl get remotearbiter -n arbiter-operator -w
 # check arbiter joined quorum
 kubectl exec deployment/rook-ceph-tools -n rook-ceph -it -- ceph mon dump
+# remove chart
+helm uninstall --namespace arbiter-operator arbiter-operator
 # stop vm
 limactl stop k8s
 # delete vm

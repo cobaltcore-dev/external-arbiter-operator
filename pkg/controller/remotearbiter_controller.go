@@ -1538,7 +1538,7 @@ func (r *RemoteArbiterReconciler) updateRemoteArbiterStatusOnFailure(
 	statusMessage := err.Error()
 	stateSet := r.setRemoteArbiterState(remoteArbiter, v1alpha1.RemoteArbiterErrorState, statusMessage)
 	condition := NewErrorCondition(conditionType, statusMessage)
-	conditionSet := r.setRemoteArbiterCondition(remoteArbiter, condition)
+	conditionSet := r.updateRemoteArbiterCondition(remoteArbiter, condition)
 	if !stateSet && !conditionSet {
 		return nil
 	}
@@ -1553,7 +1553,7 @@ func (r *RemoteArbiterReconciler) updateRemoteArbiterStatusOnSuccess(
 	ctx context.Context, remoteArbiter *v1alpha1.RemoteArbiter, state v1alpha1.RemoteArbiterState, conditionType string, statusMessage string) error {
 	_ = r.setRemoteArbiterState(remoteArbiter, state, statusMessage)
 	condition := NewOKCondition(conditionType, statusMessage)
-	conditionSet := r.setRemoteArbiterCondition(remoteArbiter, condition)
+	conditionSet := r.updateRemoteArbiterCondition(remoteArbiter, condition)
 	if !conditionSet {
 		return nil
 	}
@@ -1586,18 +1586,18 @@ func (r *RemoteArbiterReconciler) setRemoteArbiterState(remoteArbiter *v1alpha1.
 	return true
 }
 
-// func (r *RemoteArbiterReconciler) updateRemoteArbiterCondition(ctx context.Context, remoteArbiter *v1alpha1.RemoteArbiter, condition metav1.Condition) error {
-// 	if set := r.setRemoteArbiterCondition(remoteArbiter, condition); !set {
-// 		return nil
-// 	}
-// 	if err := r.Status().Update(ctx, remoteArbiter); err != nil {
-// 		return err
-// 	}
-
-// 	return nil
-// }
-
 func (r *RemoteArbiterReconciler) setRemoteArbiterCondition(remoteArbiter *v1alpha1.RemoteArbiter, condition metav1.Condition) bool {
+	existingCondition := meta.FindStatusCondition(remoteArbiter.Status.Conditions, condition.Type)
+	if existingCondition != nil {
+		return false
+	}
+
+	_ = meta.SetStatusCondition(&remoteArbiter.Status.Conditions, condition)
+
+	return true
+}
+
+func (r *RemoteArbiterReconciler) updateRemoteArbiterCondition(remoteArbiter *v1alpha1.RemoteArbiter, condition metav1.Condition) bool {
 	if meta.IsStatusConditionPresentAndEqual(remoteArbiter.Status.Conditions, condition.Type, condition.Status) {
 		return false
 	}

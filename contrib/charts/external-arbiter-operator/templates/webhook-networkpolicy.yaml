@@ -11,8 +11,8 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      control-plane: controller-manager
-      {{- include "external-arbiter-operator.labels" . | nindent 6 }}
+      control-plane: {{ .Release.Name }}-controller-manager
+      {{- include "external-arbiter-operator.selectorLabels" . | nindent 6 }}
   policyTypes:
     - Ingress
   ingress:

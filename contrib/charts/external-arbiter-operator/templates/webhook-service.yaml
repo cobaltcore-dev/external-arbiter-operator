@@ -14,5 +14,5 @@ spec:
     protocol: TCP
     targetPort: 9443
   selector:
-    control-plane: controller-manager
-    {{- include "external-arbiter-operator.labels" . | nindent 4 }}
+    control-plane: {{ .Release.Name }}-controller-manager
+    {{- include "external-arbiter-operator.selectorLabels" . | nindent 4 }}
