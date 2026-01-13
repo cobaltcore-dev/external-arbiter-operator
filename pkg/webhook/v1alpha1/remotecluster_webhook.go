@@ -61,6 +61,11 @@ func setRemoteClusterSpecDefaults(remoteClusterSpec *v1alpha1.RemoteClusterSpec,
 			Duration: time.Minute,
 		}
 	}
+	if remoteClusterSpec.Timeout == nil {
+		remoteClusterSpec.Timeout = &v1alpha1.Interval{
+			Duration: time.Second * 10,
+		}
+	}
 	if remoteClusterSpec.AccessKeyRef.Key == "" {
 		remoteClusterSpec.AccessKeyRef.Key = DefaultKubeconfigSecretKey
 	}
@@ -135,6 +140,14 @@ func validateRemoteClusterSpec(remoteClusterSpec *v1alpha1.RemoteClusterSpec, ro
 	} else if remoteClusterSpec.CheckInterval.Duration < 0 {
 		validationErrors = append(validationErrors, field.Invalid(
 			rootPath.Child("checkInterval"), remoteClusterSpec.CheckInterval, "check interval should not be negative"))
+	}
+
+	if remoteClusterSpec.Timeout == nil {
+		validationErrors = append(validationErrors, field.Invalid(
+			rootPath.Child("timeout"), remoteClusterSpec.Timeout, "timeout should not be empty"))
+	} else if remoteClusterSpec.Timeout.Duration < 0 {
+		validationErrors = append(validationErrors, field.Invalid(
+			rootPath.Child("timeout"), remoteClusterSpec.Timeout, "timeout should not be negative"))
 	}
 
 	errMsgs := validation.NameIsDNSLabel(remoteClusterSpec.Namespace, false)

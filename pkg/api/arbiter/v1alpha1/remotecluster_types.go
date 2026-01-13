@@ -26,16 +26,19 @@ const (
 type RemoteClusterState string
 
 type KubeconfigSecretSource struct {
+	// Name is a name of a secret resource in the same namespace
 	// +optional
 	// +default="matches RemoteCluster name"
 	// +example="ceph-remote-cluster"
 	Name string `json:"name,omitempty"`
+	// Key is a key in a referred secret
 	// +optional
 	// +default="kubeconfig.yaml"
 	// +example="kubeconfig.yaml"
 	Key string `json:"key,omitempty"`
 }
 
+// Interval is a wrapper struct for time.Duration, used to provide Marsahlling funcs
 // +kubebuilder:validation:Type=string
 type Interval struct {
 	time.Duration
@@ -60,12 +63,20 @@ func (r *Interval) UnmarshalJSON(bytes []byte) error {
 
 // RemoteClusterSpec defines the desired state of RemoteCluster
 type RemoteClusterSpec struct {
+	// Timeout allows to define request deadline for remote client
+	// +default="10s"
+	// +example="10s"
+	// +optional
+	Timeout *Interval `json:"timeout,omitempty"`
+	// CheckInterval defines a reconcile period for RemoteCluster, to check its health
 	// +default="1m"
 	// +example="1m"
 	// +optional
 	CheckInterval *Interval `json:"checkInterval,omitempty"`
+	// AccessKeyRef points to the secret with kubeconfig
 	// +optional
 	AccessKeyRef KubeconfigSecretSource `json:"accesskeyRef,omitempty"`
+	// Namespace targets RemoteCluster namespace, will be used to check permissions and to deploy arbiter
 	// +default="default"
 	// +example="default"
 	// +optional
@@ -74,8 +85,11 @@ type RemoteClusterSpec struct {
 
 // RemoteClusterStatus defines the observed state of RemoteCluster.
 type RemoteClusterStatus struct {
-	State   RemoteClusterState `json:"state,omitempty"`
-	Message string             `json:"message,omitempty"`
+	// State represents current reconcile state
+	State RemoteClusterState `json:"state,omitempty"`
+	// Message provides an info about current state
+	Message string `json:"message,omitempty"`
+	// Conditions are showing reconcile steps and their execution results
 	// +listType=map
 	// +listMapKey=type
 	// +optional

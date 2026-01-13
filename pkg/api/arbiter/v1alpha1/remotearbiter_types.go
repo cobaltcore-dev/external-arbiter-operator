@@ -30,9 +30,12 @@ const (
 
 type RemoteArbiterState string
 
+// NamespacedReference points to resource in particular namespace
 type NamespacedReference struct {
+	// Namespace is a referred resource namespace
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
+	// Namespace is a referred resource name
 	// +required
 	Name string `json:"name,omitempty"`
 }
@@ -41,40 +44,66 @@ func (r NamespacedReference) String() string {
 	return r.Namespace + NamespacedReferenceSeparator + r.Name
 }
 
+// PodConfiguration allows to configure particular aspects of running pod
 type PodConfiguration struct {
+	// Affinity allows to configure pod affinity
 	// +optional
 	Affinity *corev1.Affinity `json:"affinity,omitempty"`
+	// Resources allows to configure computing resource consumption
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+	// NodeSelector allows to specify node labels
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 }
 
+// RemoteClusterConfiguration allows to refer RemoteCluster instance, or to define its Spec
 // +kubebuilder:validation:ExactlyOneOf=name;spec
 type RemoteClusterConfiguration struct {
+	// Spec allows to define RemoteCluster spec in place.
+	// In this case RemoteArbiter controller will take care of RemoteCluster creation
 	// +optional
 	Spec *RemoteClusterSpec `json:"spec,omitempty"`
+	// Name allows to refer RemoteCluster in the same namespace
 	// +optional
 	Name string `json:"name,omitempty"`
+}
+
+// ServiceConfiguration allows to configure Service
+type ServiceConfiguration struct {
+	// Type allows to select service type
+	// +default="ClusterIP"
+	// +example="ClusterIP"
+	// +optional
+	Type corev1.ServiceType
 }
 
 // RemoteArbiterSpec defines the desired state of RemoteArbiter
 type RemoteArbiterSpec struct {
 
+	// Deployment allows to alter configuratio of RemoteArbiter deployment
 	// +optional
 	Deployment PodConfiguration `json:"deployment,omitempty"`
 
+	// Service allows to configure arbiter exposure via service
+	// +optional
+	Service *string `json:"service,omitempty"`
+
+	// CheckInterval defines a reconcile period for RemoteArbiter, to check its health
 	// +default="1m"
 	// +example="1m"
 	// +optional
 	CheckInterval *Interval `json:"checkInterval,omitempty"`
 
+	// CephCluster refers to CephCluster resource maanaged by Rook
 	// +required
 	CephCluster NamespacedReference `json:"cephCluster,omitempty"`
 
+	// RemoteCluster refers to RemoteCluster resource or defines its spec
 	// +required
 	RemoteCluster RemoteClusterConfiguration `json:"remoteCluster,omitempty"`
 
+	// MonIDPrefix allows to set up a Ceph monitor ID prefix, to avoid collisions with default mon ID naming algorithm.
 	// +default="ext-"
 	// +example="ext-"
 	// +optional
@@ -83,9 +112,13 @@ type RemoteArbiterSpec struct {
 
 // RemoteArbiterStatus defines the observed state of RemoteArbiter.
 type RemoteArbiterStatus struct {
-	State   RemoteArbiterState `json:"state,omitempty"`
-	Message string             `json:"message,omitempty"`
-	MonID   string             `json:"monId,omitempty"`
+	// State represents current reconcile state
+	State RemoteArbiterState `json:"state,omitempty"`
+	// Message provides an info about current state
+	Message string `json:"message,omitempty"`
+	// MonID shows monitor ID reserved for RemoteArbiter
+	MonID string `json:"monId,omitempty"`
+	// Conditions are showing reconcile steps and their execution results
 	// +listType=map
 	// +listMapKey=type
 	// +optional

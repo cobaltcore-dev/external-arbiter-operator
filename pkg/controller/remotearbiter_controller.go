@@ -1206,6 +1206,7 @@ func (r *RemoteArbiterReconciler) makeRemoteClient(ctx context.Context, s *Remot
 		s.log.Error(err, "unable to create rest config from secret", SecretTypeName, s.remoteClusterSecretObjectKey)
 		return err
 	}
+	remoteRestConfig.Timeout = s.remoteCluster.Spec.Timeout.Duration
 
 	remoteClient, err := client.New(remoteRestConfig, client.Options{})
 	if err != nil {

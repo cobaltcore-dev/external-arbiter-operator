@@ -51,28 +51,39 @@ spec:
             description: spec defines the desired state of RemoteCluster
             properties:
               accesskeyRef:
+                description: AccessKeyRef points to the secret with kubeconfig
                 properties:
                   key:
+                    default: kubeconfig.yaml
+                    description: Key is a key in a referred secret
                     type: string
                   name:
+                    default: matches RemoteCluster name
+                    description: Name is a name of a secret resource in the same namespace
                     type: string
-                required:
-                - key
-                - name
                 type: object
               checkInterval:
                 default: 1m
+                description: CheckInterval defines a reconcile period for RemoteCluster,
+                  to check its health
                 type: string
               namespace:
                 default: default
+                description: Namespace targets RemoteCluster namespace, will be used
+                  to check permissions and to deploy arbiter
                 type: string
-            required:
-            - accesskeyRef
+              timeout:
+                default: 10s
+                description: Timeout allows to define request deadline for remote
+                  client
+                type: string
             type: object
           status:
             description: status defines the observed state of RemoteCluster
             properties:
               conditions:
+                description: Conditions are showing reconcile steps and their execution
+                  results
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -132,8 +143,10 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               message:
+                description: Message provides an info about current state
                 type: string
               state:
+                description: State represents current reconcile state
                 type: string
             type: object
         required:

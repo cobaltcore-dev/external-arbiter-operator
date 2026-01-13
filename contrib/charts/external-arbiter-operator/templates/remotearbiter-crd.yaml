@@ -55,21 +55,29 @@ spec:
             description: spec defines the desired state of RemoteArbiter
             properties:
               cephCluster:
+                description: CephCluster refers to CephCluster resource maanaged by
+                  Rook
                 properties:
                   name:
+                    description: Namespace is a referred resource name
                     type: string
                   namespace:
+                    description: Namespace is a referred resource namespace
                     type: string
                 required:
                 - name
                 type: object
               checkInterval:
                 default: 1m
+                description: CheckInterval defines a reconcile period for RemoteArbiter,
+                  to check its health
                 type: string
               deployment:
+                description: Deployment allows to alter configuratio of RemoteArbiter
+                  deployment
                 properties:
                   affinity:
-                    description: Affinity is a group of affinity scheduling rules.
+                    description: Affinity allows to configure pod affinity
                     properties:
                       nodeAffinity:
                         description: Describes node affinity scheduling rules for
@@ -990,10 +998,11 @@ spec:
                   nodeSelector:
                     additionalProperties:
                       type: string
+                    description: NodeSelector allows to specify node labels
                     type: object
                   resources:
-                    description: ResourceRequirements describes the compute resource
-                      requirements.
+                    description: Resources allows to configure computing resource
+                      consumption
                     properties:
                       claims:
                         description: |-
@@ -1054,38 +1063,58 @@ spec:
                 type: object
               monIdPrefix:
                 default: ext-
+                description: MonIDPrefix allows to set up a Ceph monitor ID prefix,
+                  to avoid collisions with default mon ID naming algorithm.
                 type: string
               remoteCluster:
+                description: RemoteCluster refers to RemoteCluster resource or defines
+                  its spec
                 properties:
                   name:
+                    description: Name allows to refer RemoteCluster in the same namespace
                     type: string
                   spec:
-                    description: RemoteClusterSpec defines the desired state of RemoteCluster
+                    description: |-
+                      Spec allows to define RemoteCluster spec in place.
+                      In this case RemoteArbiter controller will take care of RemoteCluster creation
                     properties:
                       accesskeyRef:
+                        description: AccessKeyRef points to the secret with kubeconfig
                         properties:
                           key:
+                            default: kubeconfig.yaml
+                            description: Key is a key in a referred secret
                             type: string
                           name:
+                            default: matches RemoteCluster name
+                            description: Name is a name of a secret resource in the
+                              same namespace
                             type: string
-                        required:
-                        - key
-                        - name
                         type: object
                       checkInterval:
                         default: 1m
+                        description: CheckInterval defines a reconcile period for
+                          RemoteCluster, to check its health
                         type: string
                       namespace:
                         default: default
+                        description: Namespace targets RemoteCluster namespace, will
+                          be used to check permissions and to deploy arbiter
                         type: string
-                    required:
-                    - accesskeyRef
+                      timeout:
+                        default: 10s
+                        description: Timeout allows to define request deadline for
+                          remote client
+                        type: string
                     type: object
                 type: object
                 x-kubernetes-validations:
                 - message: exactly one of the fields in [name spec] must be set
                   rule: '[has(self.name),has(self.spec)].filter(x,x==true).size()
                     == 1'
+              service:
+                description: Service allows to configure arbiter exposure via service
+                type: string
             required:
             - cephCluster
             - remoteCluster
@@ -1094,6 +1123,8 @@ spec:
             description: status defines the observed state of RemoteArbiter
             properties:
               conditions:
+                description: Conditions are showing reconcile steps and their execution
+                  results
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -1153,10 +1184,13 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               message:
+                description: Message provides an info about current state
                 type: string
               monId:
+                description: MonID shows monitor ID reserved for RemoteArbiter
                 type: string
               state:
+                description: State represents current reconcile state
                 type: string
             type: object
         required:

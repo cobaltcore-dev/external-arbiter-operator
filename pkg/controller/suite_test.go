@@ -38,7 +38,7 @@ import (
 const (
 	ArbiterInstallationNamespaceName = "target"
 
-	Timeout  = time.Second * 20
+	Timeout  = time.Second * 30
 	Interval = time.Millisecond * 250
 )
 
@@ -241,17 +241,17 @@ var _ = BeforeSuite(func() {
 			{
 				Verbs:     []string{"create", "delete", "get", "list", "patch", "update", "watch"},
 				APIGroups: []string{""},
-				Resources: []string{"configmaps", "secrets"},
+				Resources: []string{"configmaps", "secrets", "services"},
 			},
 			{
 				Verbs:     []string{"create", "delete", "get", "list", "patch", "update", "watch"},
 				APIGroups: []string{""},
-				Resources: []string{"configmaps/status", "secrets/status"},
+				Resources: []string{"configmaps/status", "secrets/status", "services/status"},
 			},
 			{
 				Verbs:     []string{"update"},
 				APIGroups: []string{""},
-				Resources: []string{"configmaps/finalizers", "secrets/finalizers"},
+				Resources: []string{"configmaps/finalizers", "secrets/finalizers", "services/finalizers"},
 			},
 		},
 	}

@@ -14,3 +14,6 @@ spec:
   # interval between running cluster check
   # 0 to disable
   checkInterval: 1m
+  # remote client request timeout
+  # 0 to disable
+  timeout: 10s

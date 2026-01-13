@@ -4,6 +4,8 @@
 package controller
 
 import (
+	"fmt"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/types"
@@ -203,7 +205,7 @@ var _ = Describe("RemoteArbiter Controller", func() {
 			}, Timeout, Interval).Should(Succeed())
 		})
 
-		It("should fail to check if remote cluster ready", func() {
+		It("should fail to check if ceph cluster exists", func() {
 			conditionsMap := map[string]metav1.ConditionStatus{
 				v1alpha1.RemoteClusterExistsConditionType:     metav1.ConditionTrue,
 				v1alpha1.RemoteClusterReadyConditionType:      metav1.ConditionTrue,
@@ -287,6 +289,7 @@ var _ = Describe("RemoteArbiter Controller", func() {
 				g.Expect(remoteArbiter.Status.State).To(Equal(v1alpha1.RemoteArbiterErrorState))
 				g.Expect(remoteArbiter.Status.Message).NotTo(BeEmpty())
 				g.Expect(remoteArbiter.Status.Conditions).To(HaveLen(len(conditionsMap)))
+				fmt.Println("conditions", remoteArbiter.Status.Conditions)
 				for _, condition := range remoteArbiter.Status.Conditions {
 					expectedCondition := conditionsMap[condition.Type]
 					g.Expect(condition.Status).To(Equal(expectedCondition))
@@ -297,7 +300,7 @@ var _ = Describe("RemoteArbiter Controller", func() {
 			}, Timeout, Interval).Should(Succeed())
 		})
 
-		It("should fail to check if remote cluster ready", func() {
+		It("should fail to check if monitor deployment exists", func() {
 			conditionsMap := map[string]metav1.ConditionStatus{
 				v1alpha1.RemoteClusterExistsConditionType:     metav1.ConditionTrue,
 				v1alpha1.RemoteClusterReadyConditionType:      metav1.ConditionTrue,
@@ -350,7 +353,7 @@ var _ = Describe("RemoteArbiter Controller", func() {
 			}, Timeout, Interval).Should(Succeed())
 		})
 
-		It("should fail to check if remote cluster ready", func() {
+		It("should fail to check if monitor deployment ready", func() {
 			conditionsMap := map[string]metav1.ConditionStatus{
 				v1alpha1.RemoteClusterExistsConditionType:     metav1.ConditionTrue,
 				v1alpha1.RemoteClusterReadyConditionType:      metav1.ConditionTrue,
@@ -424,7 +427,7 @@ var _ = Describe("RemoteArbiter Controller", func() {
 			}, Timeout, Interval).Should(Succeed())
 		})
 
-		It("should fail to check if remote cluster ready", func() {
+		It("should fail to check if arbiter deployment ready", func() {
 			conditionsMap := map[string]metav1.ConditionStatus{
 				v1alpha1.RemoteClusterExistsConditionType:     metav1.ConditionTrue,
 				v1alpha1.RemoteClusterReadyConditionType:      metav1.ConditionTrue,
@@ -503,7 +506,7 @@ var _ = Describe("RemoteArbiter Controller", func() {
 			}, Timeout, Interval).Should(Succeed())
 		})
 
-		It("should fail to check if remote cluster ready", func() {
+		It("should succeed", func() {
 			conditionsMap := map[string]metav1.ConditionStatus{
 				v1alpha1.RemoteClusterExistsConditionType:     metav1.ConditionTrue,
 				v1alpha1.RemoteClusterReadyConditionType:      metav1.ConditionTrue,

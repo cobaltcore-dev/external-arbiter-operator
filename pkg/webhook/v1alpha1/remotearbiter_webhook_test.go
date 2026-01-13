@@ -237,6 +237,9 @@ var _ = Describe("RemoteArbiter Webhook", func() {
 					},
 					RemoteCluster: v1alpha1.RemoteClusterConfiguration{
 						Spec: &v1alpha1.RemoteClusterSpec{
+							Timeout: &v1alpha1.Interval{
+								Duration: 0,
+							},
 							CheckInterval: &v1alpha1.Interval{
 								Duration: 0,
 							},

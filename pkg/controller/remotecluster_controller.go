@@ -222,6 +222,7 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 		return ctrl.Result{}, err
 	}
+	remoteRestConfig.Timeout = remoteCluster.Spec.Timeout.Duration
 
 	log.Info("client config built")
 
@@ -347,20 +348,6 @@ func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return ctrl.Result{RequeueAfter: remoteCluster.Spec.CheckInterval.Duration}, nil
 }
 
-// func (r *RemoteClusterReconciler) updateRemoteClusterCondition(ctx context.Context, log logr.Logger, remoteCluster *v1alpha1.RemoteCluster, condition metav1.Condition) error {
-// 	if changed := meta.SetStatusCondition(&remoteCluster.Status.Conditions, condition); !changed {
-// 		log.Info("condition hasn't changed, nothing to update")
-// 		return nil
-// 	}
-
-// 	if err := r.Status().Update(ctx, remoteCluster); err != nil {
-// 		log.Error(err, "failed to update resource status")
-// 		return err
-// 	}
-
-// 	return nil
-// }
-
 func (r *RemoteClusterReconciler) updateRemoteClusterStatusOnFailure(
 	ctx context.Context, remoteCluster *v1alpha1.RemoteCluster, conditionType string, err error) error {
 	statusMessage := err.Error()
@@ -441,6 +428,16 @@ func (r *RemoteClusterReconciler) getPermissionReviewRequests(namespace string) 
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Namespace: namespace,
 					Resource:  "configmaps",
+					Group:     "",
+					Version:   "v1",
+				},
+			},
+		},
+		{
+			Spec: authorizationv1.SelfSubjectAccessReviewSpec{
+				ResourceAttributes: &authorizationv1.ResourceAttributes{
+					Namespace: namespace,
+					Resource:  "services",
 					Group:     "",
 					Version:   "v1",
 				},

@@ -39,6 +39,9 @@ var _ = Describe("RemoteCluster Webhook", func() {
 			Expect(remoteCluster.Spec.CheckInterval).NotTo(BeNil())
 			Expect(remoteCluster.Spec.CheckInterval.Duration).To(Equal(time.Minute))
 
+			Expect(remoteCluster.Spec.Timeout).NotTo(BeNil())
+			Expect(remoteCluster.Spec.Timeout.Duration).To(Equal(time.Second * 10))
+
 			Expect(remoteCluster.Spec.AccessKeyRef.Key).To(Equal(DefaultKubeconfigSecretKey))
 			Expect(remoteCluster.Spec.AccessKeyRef.Name).To(Equal(remoteCluster.Name))
 
@@ -51,6 +54,9 @@ var _ = Describe("RemoteCluster Webhook", func() {
 					Name: "test",
 				},
 				Spec: v1alpha1.RemoteClusterSpec{
+					Timeout: &v1alpha1.Interval{
+						Duration: 0,
+					},
 					CheckInterval: &v1alpha1.Interval{
 						Duration: 0,
 					},
@@ -69,6 +75,8 @@ var _ = Describe("RemoteCluster Webhook", func() {
 
 			Expect(remoteCluster.Spec.CheckInterval.Duration).To(Equal(remoteClusterCopy.Spec.CheckInterval.Duration))
 
+			Expect(remoteCluster.Spec.Timeout.Duration).To(Equal(remoteClusterCopy.Spec.Timeout.Duration))
+
 			Expect(remoteCluster.Spec.AccessKeyRef.Key).To(Equal(remoteClusterCopy.Spec.AccessKeyRef.Key))
 			Expect(remoteCluster.Spec.AccessKeyRef.Name).To(Equal(remoteClusterCopy.Spec.AccessKeyRef.Name))
 
@@ -79,6 +87,11 @@ var _ = Describe("RemoteCluster Webhook", func() {
 	Context("When creating or updating RemoteCluster under Validating Webhook", func() {
 		It("Should deny creation if spec is not valid", func() {
 			invalidSpecs := []v1alpha1.RemoteClusterSpec{
+				{
+					Timeout: &v1alpha1.Interval{
+						Duration: -time.Hour,
+					},
+				},
 				{
 					CheckInterval: &v1alpha1.Interval{
 						Duration: -time.Hour,
@@ -113,6 +126,9 @@ var _ = Describe("RemoteCluster Webhook", func() {
 		It("Should allow creation if all required fields are present", func() {
 			validSpecs := []v1alpha1.RemoteClusterSpec{
 				{
+					Timeout: &v1alpha1.Interval{
+						Duration: time.Hour,
+					},
 					CheckInterval: &v1alpha1.Interval{
 						Duration: time.Microsecond,
 					},
@@ -123,6 +139,9 @@ var _ = Describe("RemoteCluster Webhook", func() {
 					Namespace: "valid-k8s-name",
 				},
 				{
+					Timeout: &v1alpha1.Interval{
+						Duration: 0,
+					},
 					CheckInterval: &v1alpha1.Interval{
 						Duration: 0,
 					},
