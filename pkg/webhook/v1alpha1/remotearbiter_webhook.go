@@ -6,8 +6,10 @@ package v1alpha1
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/validation"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -179,6 +181,26 @@ func validateRemoteArbiterSpec(remoteArbiterSpec *v1alpha1.RemoteArbiterSpec, ro
 		remoteClusterSpecValidationErrors := validateRemoteClusterSpec(remoteArbiterSpec.RemoteCluster.Spec, rootPath.Child("remoteCluster", "spec"))
 		if len(remoteClusterSpecValidationErrors) > 0 {
 			validationErrors = append(validationErrors, remoteClusterSpecValidationErrors...)
+		}
+	}
+
+	if remoteArbiterSpec.Service != nil {
+		if len(remoteArbiterSpec.Service.Type) == 0 {
+			validationErrors = append(validationErrors, field.Invalid(
+				rootPath.Child("service", "type"), remoteArbiterSpec.Service.Type, "service type should not be empty"))
+		}
+
+		if remoteArbiterSpec.Service.Type == corev1.ServiceTypeNodePort {
+			parsedIP, err := netip.ParseAddr(remoteArbiterSpec.Service.NodeIP)
+			if err != nil {
+				validationErrors = append(validationErrors, field.Invalid(
+					rootPath.Child("service", "nodeIp"), remoteArbiterSpec.Service.Type, err.Error()))
+			}
+
+			if !parsedIP.Is4() {
+				validationErrors = append(validationErrors, field.Invalid(
+					rootPath.Child("service", "nodeIp"), remoteArbiterSpec.Service.Type, "should be IPv4 address"))
+			}
 		}
 	}
 

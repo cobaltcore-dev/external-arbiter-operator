@@ -104,6 +104,7 @@ var _ = Describe("RemoteArbiter Controller", func() {
 
 			targetClusterTypes := []client.Object{
 				&corev1.Secret{},
+				&corev1.Service{},
 				&corev1.ConfigMap{},
 				&appsv1.Deployment{},
 			}

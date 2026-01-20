@@ -9,6 +9,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/cobaltcore-dev/external-arbiter-operator/pkg/api/arbiter/v1alpha1"
@@ -194,6 +195,47 @@ var _ = Describe("RemoteArbiter Webhook", func() {
 					},
 					MonIDPrefix: ".notdnslabel",
 				},
+				{
+					CheckInterval: &v1alpha1.Interval{
+						Duration: 0,
+					},
+					CephCluster: v1alpha1.NamespacedReference{
+						Name:      "normal",
+						Namespace: "normal",
+					},
+					RemoteCluster: v1alpha1.RemoteClusterConfiguration{
+						Spec: &v1alpha1.RemoteClusterSpec{
+							CheckInterval: &v1alpha1.Interval{
+								Duration: -1,
+							},
+						},
+					},
+					Service: &v1alpha1.ServiceConfiguration{
+						Type: corev1.ServiceTypeNodePort,
+					},
+					MonIDPrefix: "normal",
+				},
+				{
+					CheckInterval: &v1alpha1.Interval{
+						Duration: 0,
+					},
+					CephCluster: v1alpha1.NamespacedReference{
+						Name:      "normal",
+						Namespace: "normal",
+					},
+					RemoteCluster: v1alpha1.RemoteClusterConfiguration{
+						Spec: &v1alpha1.RemoteClusterSpec{
+							CheckInterval: &v1alpha1.Interval{
+								Duration: -1,
+							},
+						},
+					},
+					Service: &v1alpha1.ServiceConfiguration{
+						Type:   corev1.ServiceTypeNodePort,
+						NodeIP: "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+					},
+					MonIDPrefix: "normal",
+				},
 			}
 
 			for idx, invalidSpec := range invalidSpecs {
@@ -249,6 +291,63 @@ var _ = Describe("RemoteArbiter Webhook", func() {
 							},
 							Namespace: "noraml",
 						},
+					},
+					MonIDPrefix: "normal",
+				},
+				{
+					CheckInterval: &v1alpha1.Interval{
+						Duration: 0,
+					},
+					CephCluster: v1alpha1.NamespacedReference{
+						Name:      "normal",
+						Namespace: "normal",
+					},
+					RemoteCluster: v1alpha1.RemoteClusterConfiguration{
+						Spec: &v1alpha1.RemoteClusterSpec{
+							Timeout: &v1alpha1.Interval{
+								Duration: 0,
+							},
+							CheckInterval: &v1alpha1.Interval{
+								Duration: 0,
+							},
+							AccessKeyRef: v1alpha1.KubeconfigSecretSource{
+								Name: "normal",
+								Key:  "any",
+							},
+							Namespace: "noraml",
+						},
+					},
+					Service: &v1alpha1.ServiceConfiguration{
+						Type: corev1.ServiceTypeClusterIP,
+					},
+					MonIDPrefix: "normal",
+				},
+				{
+					CheckInterval: &v1alpha1.Interval{
+						Duration: 0,
+					},
+					CephCluster: v1alpha1.NamespacedReference{
+						Name:      "normal",
+						Namespace: "normal",
+					},
+					RemoteCluster: v1alpha1.RemoteClusterConfiguration{
+						Spec: &v1alpha1.RemoteClusterSpec{
+							Timeout: &v1alpha1.Interval{
+								Duration: 0,
+							},
+							CheckInterval: &v1alpha1.Interval{
+								Duration: 0,
+							},
+							AccessKeyRef: v1alpha1.KubeconfigSecretSource{
+								Name: "normal",
+								Key:  "any",
+							},
+							Namespace: "noraml",
+						},
+					},
+					Service: &v1alpha1.ServiceConfiguration{
+						Type:   corev1.ServiceTypeNodePort,
+						NodeIP: "10.10.0.1",
 					},
 					MonIDPrefix: "normal",
 				},

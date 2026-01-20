@@ -63,7 +63,7 @@ var _ = Describe("RemoteCluster Controller", func() {
 
 		It("Should fail to get secret", func() {
 			conditionsMap := map[string]metav1.ConditionStatus{
-				v1alpha1.ConfigAvailableConditionType:      metav1.ConditionFalse,
+				v1alpha1.SecretAvailableConditionType:      metav1.ConditionFalse,
 				v1alpha1.ConfigValidConditionType:          metav1.ConditionUnknown,
 				v1alpha1.ClusterReachableConditionType:     metav1.ConditionUnknown,
 				v1alpha1.HasEnoughPermissionsConditionType: metav1.ConditionUnknown,
@@ -91,8 +91,8 @@ var _ = Describe("RemoteCluster Controller", func() {
 
 		It("Should fail to find key secret", func() {
 			conditionsMap := map[string]metav1.ConditionStatus{
-				v1alpha1.ConfigAvailableConditionType:      metav1.ConditionFalse,
-				v1alpha1.ConfigValidConditionType:          metav1.ConditionUnknown,
+				v1alpha1.SecretAvailableConditionType:      metav1.ConditionTrue,
+				v1alpha1.ConfigValidConditionType:          metav1.ConditionFalse,
 				v1alpha1.ClusterReachableConditionType:     metav1.ConditionUnknown,
 				v1alpha1.HasEnoughPermissionsConditionType: metav1.ConditionUnknown,
 			}
@@ -132,7 +132,7 @@ var _ = Describe("RemoteCluster Controller", func() {
 
 		It("Should fail to parse secret", func() {
 			conditionsMap := map[string]metav1.ConditionStatus{
-				v1alpha1.ConfigAvailableConditionType:      metav1.ConditionTrue,
+				v1alpha1.SecretAvailableConditionType:      metav1.ConditionTrue,
 				v1alpha1.ConfigValidConditionType:          metav1.ConditionFalse,
 				v1alpha1.ClusterReachableConditionType:     metav1.ConditionUnknown,
 				v1alpha1.HasEnoughPermissionsConditionType: metav1.ConditionUnknown,
@@ -173,7 +173,7 @@ var _ = Describe("RemoteCluster Controller", func() {
 
 		It("Should fail to check readiness", func() {
 			conditionsMap := map[string]metav1.ConditionStatus{
-				v1alpha1.ConfigAvailableConditionType:      metav1.ConditionTrue,
+				v1alpha1.SecretAvailableConditionType:      metav1.ConditionTrue,
 				v1alpha1.ConfigValidConditionType:          metav1.ConditionTrue,
 				v1alpha1.ClusterReachableConditionType:     metav1.ConditionFalse,
 				v1alpha1.HasEnoughPermissionsConditionType: metav1.ConditionUnknown,
@@ -224,7 +224,7 @@ var _ = Describe("RemoteCluster Controller", func() {
 
 		It("Should fail to validate permissions", func() {
 			conditionsMap := map[string]metav1.ConditionStatus{
-				v1alpha1.ConfigAvailableConditionType:      metav1.ConditionTrue,
+				v1alpha1.SecretAvailableConditionType:      metav1.ConditionTrue,
 				v1alpha1.ConfigValidConditionType:          metav1.ConditionTrue,
 				v1alpha1.ClusterReachableConditionType:     metav1.ConditionTrue,
 				v1alpha1.HasEnoughPermissionsConditionType: metav1.ConditionFalse,
@@ -268,7 +268,7 @@ var _ = Describe("RemoteCluster Controller", func() {
 
 		It("Should be ready", func() {
 			conditionsMap := map[string]metav1.ConditionStatus{
-				v1alpha1.ConfigAvailableConditionType:      metav1.ConditionTrue,
+				v1alpha1.SecretAvailableConditionType:      metav1.ConditionTrue,
 				v1alpha1.ConfigValidConditionType:          metav1.ConditionTrue,
 				v1alpha1.ClusterReachableConditionType:     metav1.ConditionTrue,
 				v1alpha1.HasEnoughPermissionsConditionType: metav1.ConditionTrue,

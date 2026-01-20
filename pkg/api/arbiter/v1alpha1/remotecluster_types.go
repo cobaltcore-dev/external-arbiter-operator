@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	ConfigAvailableConditionType      = "ConfigAvailable"
+	SecretAvailableConditionType      = "SecretAvailable"
 	ConfigValidConditionType          = "ConfigValid"
 	ClusterReachableConditionType     = "ClusterReachable"
 	HasEnoughPermissionsConditionType = "HasEnoughPermissions"

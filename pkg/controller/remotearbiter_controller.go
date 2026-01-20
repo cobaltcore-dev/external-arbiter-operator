@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"slices"
 	"strings"
 	"time"
@@ -21,6 +22,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -76,9 +79,9 @@ type RemoteArbiterReconcilationState struct {
 	// monitorOverrideConfigMapObjectKey *types.NamespacedName
 	monitorOverrideConfigMap *corev1.ConfigMap
 	// monitorEnvVarSecretObjectKey      *types.NamespacedName
-	monitorEnvVarSecret *corev1.Secret
-	// arbiterServiceObjectKey           *types.NamespacedName
-	// arbiterService                    *corev1.Service
+	monitorEnvVarSecret               *corev1.Secret
+	arbiterServiceObjectKey           *types.NamespacedName
+	arbiterService                    *corev1.Service
 	arbiterDeploymentObjectKey        *types.NamespacedName
 	arbiterDeployment                 *appsv1.Deployment
 	arbiterKeyringSecretObjectKey     *types.NamespacedName
@@ -98,7 +101,9 @@ type RemoteArbiterReconciler struct {
 }
 
 func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := logf.FromContext(ctx).WithValues(RemoteArbiterTypeName, req.NamespacedName)
+	log := logf.FromContext(ctx).
+		WithValues("reconcileID", uuid.NewUUID()).
+		WithValues(RemoteArbiterTypeName, req.NamespacedName)
 
 	s := &RemoteArbiterReconcilationState{
 		log:                    &log,
@@ -109,16 +114,14 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		s.log.Info("resource not found, assuming it's gone")
 		return ctrl.Result{}, nil
 	} else if err != nil {
-		log.Error(err, "unable to fetch self")
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to fetch self: %w", err)
 	}
 	log.Info("self fetch complete")
 
 	if s.remoteArbiter.GetDeletionTimestamp() != nil {
 		log.Info("deletion timestamp set, cleaning up")
 		if err := r.cleanUpRemoteArbiter(ctx, s); err != nil {
-			log.Error(err, "unable to clean up")
-			return ctrl.Result{}, err
+			return ctrl.Result{}, fmt.Errorf("unable to clean up: %w", err)
 		}
 		log.Info("clean up complete")
 		return ctrl.Result{}, nil
@@ -126,25 +129,22 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	log.Info("deletion check complete")
 
 	if err := r.checkSelfFinalizer(ctx, s); err != nil {
-		log.Error(err, "unable to check self finalizer")
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to check self finalizer: %w", err)
 	}
 	log.Info("finalizer check complete")
 
 	if err := r.checkStatusInitialized(ctx, s); err != nil {
-		log.Error(err, "unable to initialize conditions")
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to initialize conditions: %w", err)
 	}
 	log.Info("conditions check complete")
 
 	if err := r.fetchRemoteCluster(ctx, s); err != nil {
-		log.Error(err, "unable to fetch remote cluster")
-		if err := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
-			v1alpha1.RemoteClusterExistsConditionType, err); err != nil {
-			log.Error(err, "unable to update resource with conditions")
-			return ctrl.Result{}, err
+		if statusErr := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
+			v1alpha1.RemoteClusterExistsConditionType, err); statusErr != nil {
+			log.Error(err, "unable to fetch remote cluster")
+			return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", statusErr)
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to fetch remote cluster: %w", err)
 	}
 
 	statusMessage := "remote cluster fetched"
@@ -152,30 +152,27 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	if err := r.updateRemoteArbiterStatusOnSuccess(ctx, s.remoteArbiter,
 		v1alpha1.RemoteArbiterProgressingState, v1alpha1.RemoteClusterExistsConditionType, statusMessage); err != nil {
-		log.Error(err, "unable to update resource with conditions")
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", err)
 	}
 
 	if s.remoteCluster.Status.State != v1alpha1.RemoteClusterReadyState {
 		err := errors.New("remote cluster not ready")
-		log.Error(err, "unable to use remote cluster state")
-		if err := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
-			v1alpha1.RemoteClusterReadyConditionType, err); err != nil {
-			log.Error(err, "unable to update resource with conditions")
-			return ctrl.Result{}, err
+		if statusErr := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
+			v1alpha1.RemoteClusterReadyConditionType, err); statusErr != nil {
+			log.Error(err, "unable to use remote cluster")
+			return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", statusErr)
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to use remote cluster: %w", err)
 	}
 	log.Info("remote cluster ready")
 
 	if err := r.makeRemoteClient(ctx, s); err != nil {
-		log.Error(err, "unable to make remote client")
-		if err := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
-			v1alpha1.RemoteClusterReadyConditionType, err); err != nil {
-			log.Error(err, "unable to update resource with conditions")
-			return ctrl.Result{}, err
+		if statusErr := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
+			v1alpha1.RemoteClusterReadyConditionType, err); statusErr != nil {
+			log.Error(err, "unable to make remote client")
+			return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", statusErr)
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to make remote client: %w", err)
 	}
 
 	statusMessage = "remote client usable"
@@ -183,18 +180,16 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	if err := r.updateRemoteArbiterStatusOnSuccess(ctx, s.remoteArbiter,
 		v1alpha1.RemoteArbiterProgressingState, v1alpha1.RemoteClusterReadyConditionType, statusMessage); err != nil {
-		log.Error(err, "unable to update resource with conditions")
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", err)
 	}
 
 	if err := r.fetchCephCluster(ctx, s); err != nil {
-		log.Error(err, "unable to fetch ceph cluster")
-		if err := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
-			v1alpha1.CephClusterExistsConditionType, err); err != nil {
-			log.Error(err, "unable to update resource with conditions")
-			return ctrl.Result{}, err
+		if statusErr := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
+			v1alpha1.CephClusterExistsConditionType, err); statusErr != nil {
+			log.Error(err, "unable to fetch ceph cluster")
+			return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", statusErr)
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to fetch ceph cluster: %w", err)
 	}
 
 	statusMessage = "ceph cluster fetched"
@@ -202,19 +197,17 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	if err := r.updateRemoteArbiterStatusOnSuccess(ctx, s.remoteArbiter,
 		v1alpha1.RemoteArbiterProgressingState, v1alpha1.CephClusterExistsConditionType, statusMessage); err != nil {
-		log.Error(err, "unable to update resource with conditions")
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", err)
 	}
 
 	if s.cephCluster.Status.Phase != rookv1.ConditionReady {
 		err := errors.New("ceph cluster not ready")
-		log.Error(err, "unable to use ceph cluster state")
-		if err := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
-			v1alpha1.CephClusterReadyConditionType, err); err != nil {
-			log.Error(err, "unable to update resource with conditions")
-			return ctrl.Result{}, err
+		if statusErr := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
+			v1alpha1.CephClusterReadyConditionType, err); statusErr != nil {
+			log.Error(err, "unable to use ceph cluster")
+			return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", statusErr)
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to use ceph cluster: %w", err)
 	}
 
 	statusMessage = "ceph cluster ready"
@@ -222,18 +215,16 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	if err := r.updateRemoteArbiterStatusOnSuccess(ctx, s.remoteArbiter,
 		v1alpha1.RemoteArbiterProgressingState, v1alpha1.CephClusterReadyConditionType, statusMessage); err != nil {
-		log.Error(err, "unable to update resource with conditions")
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", err)
 	}
 
 	if err := r.reserveExternalArbiterID(ctx, s); err != nil {
-		log.Error(err, "unable to reserve external arbiter id")
-		if err := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
-			v1alpha1.CephClusterConfiguredConditionType, err); err != nil {
-			log.Error(err, "unable to update resource with conditions")
-			return ctrl.Result{}, err
+		if statusErr := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
+			v1alpha1.CephClusterConfiguredConditionType, err); statusErr != nil {
+			log.Error(err, "unable to reserve external arbiter id")
+			return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", statusErr)
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to reserve external arbiter id: %w", err)
 	}
 
 	statusMessage = "ceph cluster configured"
@@ -241,18 +232,16 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	if err := r.updateRemoteArbiterStatusOnSuccess(ctx, s.remoteArbiter,
 		v1alpha1.RemoteArbiterProgressingState, v1alpha1.CephClusterConfiguredConditionType, statusMessage); err != nil {
-		log.Error(err, "unable to update resource with conditions")
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", err)
 	}
 
 	if err := r.fetchMonitorDeployment(ctx, s); err != nil {
-		log.Error(err, "unable to fetch monitor deployment")
-		if err := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
-			v1alpha1.MonitorDeploymentExistsConditionType, err); err != nil {
-			log.Error(err, "unable to update resource with conditions")
-			return ctrl.Result{}, err
+		if statusErr := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
+			v1alpha1.MonitorDeploymentExistsConditionType, err); statusErr != nil {
+			log.Error(err, "unable to fetch monitor deployment")
+			return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", statusErr)
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to fetch monitor deployment: %w", err)
 	}
 
 	statusMessage = "monitor deployment fetched"
@@ -260,29 +249,26 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	if err := r.updateRemoteArbiterStatusOnSuccess(ctx, s.remoteArbiter,
 		v1alpha1.RemoteArbiterProgressingState, v1alpha1.MonitorDeploymentExistsConditionType, statusMessage); err != nil {
-		log.Error(err, "unable to update resource with conditions")
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", err)
 	}
 
 	if s.monitorDeployment.Status.Replicas == 0 || s.monitorDeployment.Status.UnavailableReplicas != 0 {
 		err := errors.New("monitor deployment is not ready")
-		log.Error(err, "unable to use monitor deployment")
-		if err := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
-			v1alpha1.MonitorDeploymentReadyConditionType, err); err != nil {
-			log.Error(err, "unable to update resource with conditions")
-			return ctrl.Result{}, err
+		if statusErr := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
+			v1alpha1.MonitorDeploymentReadyConditionType, err); statusErr != nil {
+			log.Error(err, "unable to use monitor deployment")
+			return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", statusErr)
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to use monitor deployment: %w", err)
 	}
 	if s.monitorDeployment.Status.UpdatedReplicas != s.monitorDeployment.Status.Replicas {
 		err := errors.New("monitor deployment is updating self")
-		log.Error(err, "unable to use monitor deployment")
-		if err := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
-			v1alpha1.MonitorDeploymentReadyConditionType, err); err != nil {
-			log.Error(err, "unable to update resource with conditions")
-			return ctrl.Result{}, err
+		if statusErr := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
+			v1alpha1.MonitorDeploymentReadyConditionType, err); statusErr != nil {
+			log.Error(err, "unable to use monitor deployment")
+			return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", statusErr)
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to use monitor deployment: %w", err)
 	}
 
 	statusMessage = "monitor deployment is ready"
@@ -290,18 +276,16 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	if err := r.updateRemoteArbiterStatusOnSuccess(ctx, s.remoteArbiter,
 		v1alpha1.RemoteArbiterProgressingState, v1alpha1.MonitorDeploymentReadyConditionType, statusMessage); err != nil {
-		log.Error(err, "unable to update resource with conditions")
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", err)
 	}
 
 	if err := r.fetchArbiterDeployment(ctx, s); err != nil {
-		log.Error(err, "unable to fetch arbiter deployment")
-		if err := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
-			v1alpha1.ArbiterDeploymentExistsConditionType, err); err != nil {
-			log.Error(err, "unable to update resource with conditions")
-			return ctrl.Result{}, err
+		if statusErr := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
+			v1alpha1.ArbiterDeploymentExistsConditionType, err); statusErr != nil {
+			log.Error(err, "unable to fetch arbiter deployment")
+			return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", statusErr)
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to fetch arbiter deployment: %w", err)
 	}
 
 	statusMessage = "arbiter deployment fetched"
@@ -309,31 +293,28 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	if err := r.updateRemoteArbiterStatusOnSuccess(ctx, s.remoteArbiter,
 		v1alpha1.RemoteArbiterProgressingState, v1alpha1.ArbiterDeploymentExistsConditionType, statusMessage); err != nil {
-		log.Error(err, "unable to update resource with conditions")
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", err)
 	}
 
 	if err := r.checkArbiterDeploymentUpToDate(ctx, s); err != nil {
-		log.Error(err, "unable to check if arbiter deployment up to date")
-		if err := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
-			v1alpha1.ArbiterDeploymentReadyConditionType, err); err != nil {
-			log.Error(err, "unable to update resource with conditions")
-			return ctrl.Result{}, err
+		if statusErr := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
+			v1alpha1.ArbiterDeploymentReadyConditionType, err); statusErr != nil {
+			log.Error(err, "unable to check if arbiter deployment up to date")
+			return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", statusErr)
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to check if arbiter deployment up to date: %w", err)
 	}
 	log.Info("arbiter deployment should be up to date")
 
 	if s.shouldRestart {
 		log.Info("will restart arbiter deployment")
 		if err := r.restartArbiterDeployment(ctx, s); err != nil {
-			log.Error(err, "unable to restart arbiter deployment")
-			if err := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
-				v1alpha1.ArbiterDeploymentReadyConditionType, err); err != nil {
-				log.Error(err, "unable to update resource with conditions")
-				return ctrl.Result{}, err
+			if statusErr := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
+				v1alpha1.ArbiterDeploymentReadyConditionType, err); statusErr != nil {
+				log.Error(err, "unable to restart arbiter deployment")
+				return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", statusErr)
 			}
-			return ctrl.Result{}, err
+			return ctrl.Result{}, fmt.Errorf("unable to restart arbiter deployment: %w", err)
 		}
 		log.Info("arbiter deployment restart triggered")
 	} else {
@@ -342,23 +323,21 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	if s.arbiterDeployment.Status.Replicas == 0 || s.arbiterDeployment.Status.UnavailableReplicas != 0 {
 		err := errors.New("arbiter deployment is not ready")
-		log.Error(err, "unable to use arbiter deployment")
-		if err := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
-			v1alpha1.ArbiterDeploymentReadyConditionType, err); err != nil {
-			log.Error(err, "unable to update resource with conditions")
-			return ctrl.Result{}, err
+		if statusErr := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
+			v1alpha1.ArbiterDeploymentReadyConditionType, err); statusErr != nil {
+			log.Error(err, "unable to use arbiter deployment")
+			return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", statusErr)
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to use arbiter deployment: %w", err)
 	}
 	if s.arbiterDeployment.Status.UpdatedReplicas != s.arbiterDeployment.Status.Replicas {
 		err := errors.New("arbiter deployment is updating self")
-		log.Error(err, "unable to use arbiter deployment")
-		if err := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
-			v1alpha1.ArbiterDeploymentReadyConditionType, err); err != nil {
-			log.Error(err, "unable to update resource with conditions")
-			return ctrl.Result{}, err
+		if statusErr := r.updateRemoteArbiterStatusOnFailure(ctx, s.remoteArbiter,
+			v1alpha1.ArbiterDeploymentReadyConditionType, err); statusErr != nil {
+			log.Error(err, "unable to use arbiter deployment")
+			return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", statusErr)
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to use arbiter deployment: %w", err)
 	}
 
 	statusMessage = "arbiter deployment ready"
@@ -366,9 +345,9 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	if err := r.updateRemoteArbiterStatusOnSuccess(ctx, s.remoteArbiter,
 		v1alpha1.RemoteArbiterReadyState, v1alpha1.ArbiterDeploymentReadyConditionType, statusMessage); err != nil {
-		log.Error(err, "unable to update resource with conditions")
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("unable to update resource with conditions: %w", err)
 	}
+	log.Info("reconcile finished")
 
 	return ctrl.Result{RequeueAfter: s.remoteArbiter.Spec.CheckInterval.Duration}, nil
 }
@@ -400,12 +379,12 @@ func (r *RemoteArbiterReconciler) reserveExternalArbiterID(ctx context.Context, 
 
 	s.remoteArbiter.Status.MonID = externalID
 	if err := r.Status().Update(ctx, s.remoteArbiter); err != nil {
-		return err
+		return fmt.Errorf("unable to update resource status: %w", err)
 	}
 
 	s.cephCluster.Spec.Mon.ExternalMonIDs = append(s.cephCluster.Spec.Mon.ExternalMonIDs, externalID)
 	if err := r.Update(ctx, s.cephCluster); err != nil {
-		return err
+		return fmt.Errorf("unable to update resource: %w", err)
 	}
 
 	return nil
@@ -416,8 +395,7 @@ func (r *RemoteArbiterReconciler) checkArbiterDeploymentUpToDate(ctx context.Con
 	if s.monitorKeyringSecret.ResourceVersion != lastAppliedVersion {
 		s.log.Info("keyring secret is outdated")
 		if err := r.updateArbiterKeyringSecret(ctx, s); err != nil {
-			s.log.Error(err, "unable to update arbiter keyring secret")
-			return err
+			return fmt.Errorf("unable to update arbiter keyring secret: %w", err)
 		}
 		s.outdated = true
 		s.shouldRestart = true
@@ -429,8 +407,7 @@ func (r *RemoteArbiterReconciler) checkArbiterDeploymentUpToDate(ctx context.Con
 	if s.monitorEnvVarSecret.ResourceVersion != lastAppliedVersion {
 		s.log.Info("env var secret is outdated")
 		if err := r.updateArbiterEnvVarSecret(ctx, s); err != nil {
-			s.log.Error(err, "unable to update arbiter env var secret")
-			return err
+			return fmt.Errorf("unable to update arbiter env var secret: %w", err)
 		}
 		s.outdated = true
 		s.shouldRestart = true
@@ -442,8 +419,7 @@ func (r *RemoteArbiterReconciler) checkArbiterDeploymentUpToDate(ctx context.Con
 	if s.monitorOverrideConfigMap.ResourceVersion != lastAppliedVersion {
 		s.log.Info("override configmap is outdated")
 		if err := r.updateArbiterOverrideConfigMap(ctx, s); err != nil {
-			s.log.Error(err, "unable to update arbiter override configmap")
-			return err
+			return fmt.Errorf("unable to update arbiter override configmap: %w", err)
 		}
 		s.outdated = true
 		s.shouldRestart = true
@@ -455,8 +431,7 @@ func (r *RemoteArbiterReconciler) checkArbiterDeploymentUpToDate(ctx context.Con
 	if s.monitorDeployment.ResourceVersion != lastAppliedVersion {
 		s.log.Info("deployment is outdated")
 		if err := r.updateArbiterDeployment(ctx, s); err != nil {
-			s.log.Error(err, "unable to update arbiter deployment")
-			return err
+			return fmt.Errorf("unable to update arbiter deployment: %w", err)
 		}
 		s.outdated = true
 		s.shouldRestart = false
@@ -474,8 +449,7 @@ func (r *RemoteArbiterReconciler) updateArbiterKeyringSecret(ctx context.Context
 	s.arbiterKeyringSecret.Data = s.monitorKeyringSecret.Data
 
 	if err := s.remoteClusterClient.Update(ctx, s.arbiterKeyringSecret); err != nil {
-		s.log.Error(err, "unable to update resource", SecretTypeName, s.arbiterKeyringSecretObjectKey)
-		return err
+		return fmt.Errorf("unable to update resource %s %s: %w", SecretTypeName, s.arbiterKeyringSecretObjectKey, err)
 	}
 
 	return nil
@@ -486,8 +460,7 @@ func (r *RemoteArbiterReconciler) updateArbiterEnvVarSecret(ctx context.Context,
 	s.arbiterEnvVarSecret.Data = s.monitorEnvVarSecret.Data
 
 	if err := s.remoteClusterClient.Update(ctx, s.arbiterEnvVarSecret); err != nil {
-		s.log.Error(err, "unable to update resource", SecretTypeName, s.arbiterEnvVarSecretObjectKey)
-		return err
+		return fmt.Errorf("unable to update resource %s %s: %w", SecretTypeName, s.arbiterEnvVarSecretObjectKey, err)
 	}
 
 	return nil
@@ -498,8 +471,7 @@ func (r *RemoteArbiterReconciler) updateArbiterOverrideConfigMap(ctx context.Con
 	s.arbiterOverrideConfigMap.Data = s.monitorOverrideConfigMap.Data
 
 	if err := s.remoteClusterClient.Update(ctx, s.arbiterOverrideConfigMap); err != nil {
-		s.log.Error(err, "unable to update resource", ConfigMapTypeName, s.arbiterOverrideConfigMapObjectKey)
-		return err
+		return fmt.Errorf("unable to update resource %s %s: %w", ConfigMapTypeName, s.arbiterOverrideConfigMapObjectKey, err)
 	}
 
 	return nil
@@ -522,6 +494,11 @@ func (r *RemoteArbiterReconciler) makeDeploymentSpec(s *RemoteArbiterReconcilati
 	spec.Template.Spec.NodeSelector = s.remoteArbiter.Spec.Deployment.NodeSelector
 	spec.Template.Spec.Affinity = s.remoteArbiter.Spec.Deployment.Affinity
 	spec.Template.Spec.Resources = s.remoteArbiter.Spec.Deployment.Resources
+
+	publicAddress, err := r.determinePublicAddress(s)
+	if err != nil {
+		return fmt.Errorf("unable to determine public address: %w", err)
+	}
 
 	monID := s.remoteArbiter.Status.MonID
 	volumes := spec.Template.Spec.Volumes
@@ -552,8 +529,8 @@ func (r *RemoteArbiterReconciler) makeDeploymentSpec(s *RemoteArbiterReconcilati
 	volumes = append(volumes, monMapVolume)
 	spec.Template.Spec.Volumes = volumes
 
-	r.modifyContainers(spec.Template.Spec.Containers, monID, s.arbiterEnvVarSecret.Name)
-	r.modifyContainers(spec.Template.Spec.InitContainers, monID, s.arbiterEnvVarSecret.Name)
+	r.modifyContainers(spec.Template.Spec.Containers, monID, s.arbiterEnvVarSecret.Name, publicAddress)
+	r.modifyContainers(spec.Template.Spec.InitContainers, monID, s.arbiterEnvVarSecret.Name, publicAddress)
 
 	var image string
 	var fsid string
@@ -590,7 +567,40 @@ func (r *RemoteArbiterReconciler) makeDeploymentSpec(s *RemoteArbiterReconcilati
 	return nil
 }
 
-func (r *RemoteArbiterReconciler) modifyContainers(containers []corev1.Container, monID string, envVarSecretName string) {
+func (r *RemoteArbiterReconciler) determinePublicAddress(s *RemoteArbiterReconcilationState) (string, error) {
+	if s.arbiterService == nil {
+		return "$(ROOK_POD_IP)", nil
+	}
+
+	switch s.arbiterService.Spec.Type {
+	case corev1.ServiceTypeClusterIP:
+		if s.arbiterService.Spec.ClusterIP == "" {
+			return "", errors.New("service cluster ip is not yet allocated")
+		}
+		return s.arbiterService.Spec.ClusterIP, nil
+	case corev1.ServiceTypeNodePort:
+		return s.remoteArbiter.Spec.Service.NodeIP, nil
+	case corev1.ServiceTypeLoadBalancer:
+		if len(s.arbiterService.Status.LoadBalancer.Ingress) == 0 {
+			return "", errors.New("service load balancer ip is not yet allocated")
+		}
+		for _, ingress := range s.arbiterService.Status.LoadBalancer.Ingress {
+			parsedIP, err := netip.ParseAddr(ingress.IP)
+			if err != nil {
+				continue
+			}
+			if !parsedIP.Is4() {
+				continue
+			}
+			return ingress.IP, nil
+		}
+		return "", errors.New("load balancer ingress has no IPv4 address")
+	default:
+		return "", fmt.Errorf("unsupported service type %s", s.arbiterService.Spec.Type)
+	}
+}
+
+func (r *RemoteArbiterReconciler) modifyContainers(containers []corev1.Container, monID string, envVarSecretName string, publicAddress string) {
 	for containerIdx := range containers {
 		volumeMounts := containers[containerIdx].VolumeMounts
 		for volumeMountIdx := range volumeMounts {
@@ -617,7 +627,7 @@ func (r *RemoteArbiterReconciler) modifyContainers(containers []corev1.Container
 			case strings.HasPrefix(args[argIdx], "--setuser-match-path="):
 				args[argIdx] = fmt.Sprintf("--setuser-match-path=/var/lib/ceph/mon/ceph-%s/store.db", monID)
 			case strings.HasPrefix(args[argIdx], "--public-addr="):
-				args[argIdx] = "--public-addr=$(ROOK_POD_IP)"
+				args[argIdx] = fmt.Sprintf("--public-addr=%s", publicAddress)
 			}
 		}
 
@@ -730,7 +740,7 @@ func (r *RemoteArbiterReconciler) getMonMapInitContainer(fsid string, image stri
 
 func (r *RemoteArbiterReconciler) updateArbiterDeployment(ctx context.Context, s *RemoteArbiterReconcilationState) error {
 	if err := r.makeDeploymentSpec(s); err != nil {
-		return err
+		return fmt.Errorf("unable to make deployment spec: %s", err)
 	}
 
 	s.arbiterDeployment.Labels[RemoteArbiterResourceVersionLabel] = s.monitorDeployment.ResourceVersion
@@ -740,8 +750,7 @@ func (r *RemoteArbiterReconciler) updateArbiterDeployment(ctx context.Context, s
 	s.arbiterDeployment.Spec.Template.Annotations[RemoteArbiterRestartAnnotation] = time.Now().Format(time.RFC3339)
 
 	if err := s.remoteClusterClient.Update(ctx, s.arbiterDeployment); err != nil {
-		s.log.Error(err, "unable to update resource", ConfigMapTypeName, s.arbiterDeploymentObjectKey)
-		return err
+		return fmt.Errorf("unable to update resource %s %s: %w", DeploymentTypeName, s.arbiterDeploymentObjectKey, err)
 	}
 
 	return nil
@@ -754,20 +763,13 @@ func (r *RemoteArbiterReconciler) restartArbiterDeployment(ctx context.Context, 
 	s.arbiterDeployment.Spec.Template.Annotations[RemoteArbiterRestartAnnotation] = time.Now().Format(time.RFC3339)
 
 	if err := s.remoteClusterClient.Update(ctx, s.arbiterDeployment); err != nil {
-		s.log.Error(err, "unable to update resource", ConfigMapTypeName, s.arbiterDeploymentObjectKey)
-		return err
+		return fmt.Errorf("unable to update resource %s %s: %w", DeploymentTypeName, s.arbiterDeploymentObjectKey, err)
 	}
 
 	return nil
 }
 
 func (r *RemoteArbiterReconciler) fetchArbiterDeployment(ctx context.Context, s *RemoteArbiterReconcilationState) error {
-	deploymentList := &appsv1.DeploymentList{}
-	// serviceList := &corev1.ServiceList{}
-	keyringSecretList := &corev1.SecretList{}
-	envVarSecretList := &corev1.SecretList{}
-	overrideConfigMapList := &corev1.ConfigMapList{}
-
 	namespaceSelector := client.InNamespace(s.remoteCluster.Spec.Namespace)
 	arbiterLabelSelector := client.MatchingLabels{
 		RemoteArbiterLookupLabel: s.remoteArbiter.Name,
@@ -779,14 +781,15 @@ func (r *RemoteArbiterReconciler) fetchArbiterDeployment(ctx context.Context, s 
 		RemoteArbiterRoleLabel: RemoteArbiterEnvVarRole,
 	}
 
+	keyringSecretList := &corev1.SecretList{}
 	if err := s.remoteClusterClient.List(ctx, keyringSecretList, namespaceSelector, arbiterLabelSelector, keyringRoleLabelSelector); err != nil {
-		return err
+		return fmt.Errorf("unable to list keyring secret: %w", err)
 	}
 	keyringSecretCount := len(keyringSecretList.Items)
 	switch keyringSecretCount {
 	case 0:
 		if err := r.createArbiterKeyringSecret(ctx, s); err != nil {
-			return err
+			return fmt.Errorf("unable to create keyring secret: %w", err)
 		}
 	case 1:
 		s.arbiterKeyringSecret = &keyringSecretList.Items[0]
@@ -795,14 +798,15 @@ func (r *RemoteArbiterReconciler) fetchArbiterDeployment(ctx context.Context, s 
 		return fmt.Errorf("expected to get 1 keyring secret, but got %d", keyringSecretCount)
 	}
 
+	envVarSecretList := &corev1.SecretList{}
 	if err := s.remoteClusterClient.List(ctx, envVarSecretList, namespaceSelector, arbiterLabelSelector, envVarRoleLabelSelector); err != nil {
-		return err
+		return fmt.Errorf("unable to list env var secret: %w", err)
 	}
 	envVarSecretCount := len(envVarSecretList.Items)
 	switch envVarSecretCount {
 	case 0:
 		if err := r.createArbiterEnvVarSecret(ctx, s); err != nil {
-			return err
+			return fmt.Errorf("unable to create env var secret: %w", err)
 		}
 	case 1:
 		s.arbiterEnvVarSecret = &envVarSecretList.Items[0]
@@ -811,14 +815,15 @@ func (r *RemoteArbiterReconciler) fetchArbiterDeployment(ctx context.Context, s 
 		return fmt.Errorf("expected to get 1 env var secret, but got %d", envVarSecretCount)
 	}
 
+	overrideConfigMapList := &corev1.ConfigMapList{}
 	if err := s.remoteClusterClient.List(ctx, overrideConfigMapList, namespaceSelector, arbiterLabelSelector); err != nil {
-		return err
+		return fmt.Errorf("unable to list override configmap: %w", err)
 	}
 	overrideConfigMapCount := len(overrideConfigMapList.Items)
 	switch overrideConfigMapCount {
 	case 0:
 		if err := r.createArbiterOverrideConfigMap(ctx, s); err != nil {
-			return err
+			return fmt.Errorf("unable to create override configmap: %w", err)
 		}
 	case 1:
 		s.arbiterOverrideConfigMap = &overrideConfigMapList.Items[0]
@@ -827,30 +832,34 @@ func (r *RemoteArbiterReconciler) fetchArbiterDeployment(ctx context.Context, s 
 		return fmt.Errorf("expected to get 1 override config, but got %d", overrideConfigMapCount)
 	}
 
-	// if err := s.remoteClusterClient.List(ctx, serviceList, namespaceSelector, arbiterLabelSelector); err != nil {
-	// 	return err
-	// }
-	// arbiterServiceCount := len(serviceList.Items)
-	// switch arbiterServiceCount {
-	// case 0:
-	// 	if err := r.createArbiterService(ctx, s); err != nil {
-	// 		return err
-	// 	}
-	// case 1:
-	// 	s.arbiterService = &serviceList.Items[0]
-	// 	s.arbiterServiceObjectKey = ObjectKeyFromObject(s.arbiterService)
-	// default:
-	// 	return fmt.Errorf("expected to get 1 service, but got %d", arbiterServiceCount)
-	// }
+	if s.remoteArbiter.Spec.Service != nil {
+		serviceList := &corev1.ServiceList{}
+		if err := s.remoteClusterClient.List(ctx, serviceList, namespaceSelector, arbiterLabelSelector); err != nil {
+			return fmt.Errorf("unable to list service: %w", err)
+		}
+		arbiterServiceCount := len(serviceList.Items)
+		switch arbiterServiceCount {
+		case 0:
+			if err := r.createArbiterService(ctx, s); err != nil {
+				return fmt.Errorf("unable to create service: %w", err)
+			}
+		case 1:
+			s.arbiterService = &serviceList.Items[0]
+			s.arbiterServiceObjectKey = ObjectKeyFromObject(s.arbiterService)
+		default:
+			return fmt.Errorf("expected to get 1 service, but got %d", arbiterServiceCount)
+		}
+	}
 
+	deploymentList := &appsv1.DeploymentList{}
 	if err := s.remoteClusterClient.List(ctx, deploymentList, namespaceSelector, arbiterLabelSelector); err != nil {
-		return err
+		return fmt.Errorf("unable to list deployment: %w", err)
 	}
 	arbiterDeploymentCount := len(deploymentList.Items)
 	switch arbiterDeploymentCount {
 	case 0:
 		if err := r.createArbiterDeployment(ctx, s); err != nil {
-			return err
+			return fmt.Errorf("unable to create deployment: %w", err)
 		}
 	case 1:
 		s.arbiterDeployment = &deploymentList.Items[0]
@@ -878,7 +887,7 @@ func (r *RemoteArbiterReconciler) createArbiterKeyringSecret(ctx context.Context
 	}
 
 	if err := s.remoteClusterClient.Create(ctx, arbiterKeyringSecret); err != nil {
-		return err
+		return fmt.Errorf("unable to create resource: %w", err)
 	}
 
 	s.arbiterKeyringSecret = arbiterKeyringSecret
@@ -902,7 +911,7 @@ func (r *RemoteArbiterReconciler) createArbiterEnvVarSecret(ctx context.Context,
 	}
 
 	if err := s.remoteClusterClient.Create(ctx, arbiterEnvVarSecret); err != nil {
-		return err
+		return fmt.Errorf("unable to create resource: %w", err)
 	}
 
 	s.arbiterEnvVarSecret = arbiterEnvVarSecret
@@ -925,7 +934,7 @@ func (r *RemoteArbiterReconciler) createArbiterOverrideConfigMap(ctx context.Con
 	}
 
 	if err := s.remoteClusterClient.Create(ctx, arbiterOverrideConfigMap); err != nil {
-		return err
+		return fmt.Errorf("unable to create resource: %w", err)
 	}
 
 	s.arbiterOverrideConfigMap = arbiterOverrideConfigMap
@@ -947,60 +956,60 @@ func (r *RemoteArbiterReconciler) createArbiterDeployment(ctx context.Context, s
 	}
 
 	if err := r.makeDeploymentSpec(s); err != nil {
-		return err
+		return fmt.Errorf("unable to make deployment spec: %w", err)
 	}
 
 	if err := s.remoteClusterClient.Create(ctx, s.arbiterDeployment); err != nil {
-		return err
+		return fmt.Errorf("unable to create resource: %w", err)
 	}
 
 	return nil
 }
 
-// func (r *RemoteArbiterReconciler) createArbiterService(ctx context.Context, s *RemoteArbiterReconcilationState) error {
-// 	trafficPolicy := corev1.ServiceInternalTrafficPolicyCluster
-// 	ipPolicy := corev1.IPFamilyPolicySingleStack
+func (r *RemoteArbiterReconciler) createArbiterService(ctx context.Context, s *RemoteArbiterReconcilationState) error {
+	trafficPolicy := corev1.ServiceInternalTrafficPolicyCluster
+	ipPolicy := corev1.IPFamilyPolicySingleStack
 
-// 	s.arbiterService = &corev1.Service{
-// 		ObjectMeta: metav1.ObjectMeta{
-// 			GenerateName: "arbiter-service-",
-// 			Namespace:    s.remoteCluster.Spec.Namespace,
-// 			Labels: map[string]string{
-// 				RemoteArbiterLookupLabel: s.remoteArbiter.Name,
-// 			},
-// 			Finalizers: []string{RemoteArbiterFinalizer},
-// 		},
-// 		Spec: corev1.ServiceSpec{
-// 			Ports: []corev1.ServicePort{
-// 				{
-// 					Name:       "tcp-msgr1",
-// 					Port:       6789,
-// 					Protocol:   corev1.ProtocolTCP,
-// 					TargetPort: intstr.FromInt32(6789),
-// 				},
-// 				{
-// 					Name:       "tcp-msgr2",
-// 					Port:       3300,
-// 					Protocol:   corev1.ProtocolTCP,
-// 					TargetPort: intstr.FromInt32(3300),
-// 				},
-// 			},
-// 			Selector: map[string]string{
-// 				RemoteArbiterLookupLabel: s.remoteArbiter.Name,
-// 			},
-// 			InternalTrafficPolicy: &trafficPolicy,
-// 			IPFamilies:            []corev1.IPFamily{corev1.IPv4Protocol},
-// 			IPFamilyPolicy:        &ipPolicy,
-// 			SessionAffinity:       corev1.ServiceAffinityNone,
-// 		},
-// 	}
+	s.arbiterService = &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "arbiter-service-",
+			Namespace:    s.remoteCluster.Spec.Namespace,
+			Labels: map[string]string{
+				RemoteArbiterLookupLabel: s.remoteArbiter.Name,
+			},
+			Finalizers: []string{RemoteArbiterFinalizer},
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{
+				{
+					Name:       "tcp-msgr1",
+					Port:       6789,
+					Protocol:   corev1.ProtocolTCP,
+					TargetPort: intstr.FromInt32(6789),
+				},
+				{
+					Name:       "tcp-msgr2",
+					Port:       3300,
+					Protocol:   corev1.ProtocolTCP,
+					TargetPort: intstr.FromInt32(3300),
+				},
+			},
+			Selector: map[string]string{
+				RemoteArbiterLookupLabel: s.remoteArbiter.Name,
+			},
+			InternalTrafficPolicy: &trafficPolicy,
+			IPFamilies:            []corev1.IPFamily{corev1.IPv4Protocol},
+			IPFamilyPolicy:        &ipPolicy,
+			SessionAffinity:       corev1.ServiceAffinityNone,
+		},
+	}
 
-// 	if err := s.remoteClusterClient.Create(ctx, s.arbiterService); err != nil {
-// 		return err
-// 	}
+	if err := s.remoteClusterClient.Create(ctx, s.arbiterService); err != nil {
+		return fmt.Errorf("unable to create resource: %w", err)
+	}
 
-// 	return nil
-// }
+	return nil
+}
 
 func (r *RemoteArbiterReconciler) fetchMonitorDeployment(ctx context.Context, s *RemoteArbiterReconcilationState) error {
 	labelSelector := client.MatchingLabels{
@@ -1011,7 +1020,7 @@ func (r *RemoteArbiterReconciler) fetchMonitorDeployment(ctx context.Context, s 
 
 	deploymentList := &appsv1.DeploymentList{}
 	if err := r.List(ctx, deploymentList, labelSelector, namespaceSelector); err != nil {
-		return err
+		return fmt.Errorf("unable to list resources: %w", err)
 	}
 
 	if len(deploymentList.Items) == 0 {
@@ -1068,7 +1077,7 @@ func (r *RemoteArbiterReconciler) fetchMonitorDeployment(ctx context.Context, s 
 	}
 	keyringSecret := &corev1.Secret{}
 	if err := r.Get(ctx, keyringSecretObjectKey, keyringSecret); err != nil {
-		return err
+		return fmt.Errorf("unable to get resource: %w", err)
 	}
 
 	s.monitorKeyringSecret = keyringSecret
@@ -1079,7 +1088,7 @@ func (r *RemoteArbiterReconciler) fetchMonitorDeployment(ctx context.Context, s 
 	}
 	overrideConfigMap := &corev1.ConfigMap{}
 	if err := r.Get(ctx, overrideConfigMapObjectKey, overrideConfigMap); err != nil {
-		return err
+		return fmt.Errorf("unable to get resource: %w", err)
 	}
 
 	s.monitorOverrideConfigMap = overrideConfigMap
@@ -1126,7 +1135,7 @@ func (r *RemoteArbiterReconciler) fetchMonitorDeployment(ctx context.Context, s 
 	}
 	envVarSecret := &corev1.Secret{}
 	if err := r.Get(ctx, envVarSecretObjectKey, envVarSecret); err != nil {
-		return err
+		return fmt.Errorf("unable to get resource: %w", err)
 	}
 
 	s.monitorEnvVarSecret = envVarSecret
@@ -1143,8 +1152,7 @@ func (r *RemoteArbiterReconciler) fetchCephCluster(ctx context.Context, s *Remot
 	cephCluster := &rookv1.CephCluster{}
 
 	if err := r.Get(ctx, *s.cephClusterObjectKey, cephCluster); err != nil {
-		s.log.Error(err, "unable to get resource", "cephcluster", s.cephClusterObjectKey)
-		return err
+		return fmt.Errorf("unable to get resource: %w", err)
 	}
 
 	s.cephCluster = cephCluster
@@ -1157,8 +1165,7 @@ func (r *RemoteArbiterReconciler) fetchArbiter(ctx context.Context, s *RemoteArb
 	remoteArbiter := &v1alpha1.RemoteArbiter{}
 	err := r.Get(ctx, *s.remoteArbiterObjectKey, remoteArbiter)
 	if err != nil {
-		s.log.Error(err, "unable to get resource")
-		return err
+		return fmt.Errorf("unable to get resource: %w", err)
 	}
 
 	s.remoteArbiter = remoteArbiter
@@ -1167,16 +1174,15 @@ func (r *RemoteArbiterReconciler) fetchArbiter(ctx context.Context, s *RemoteArb
 }
 
 func (r *RemoteArbiterReconciler) checkSelfFinalizer(ctx context.Context, s *RemoteArbiterReconcilationState) error {
-	if controllerutil.ContainsFinalizer(s.remoteArbiter, RemoteArbiterFinalizer) {
+	if updated := controllerutil.AddFinalizer(s.remoteArbiter, RemoteArbiterFinalizer); !updated {
 		s.log.Info("self finalizer exists, nothing to do")
 		return nil
 	}
 
 	s.log.Info("adding finalizer on self")
-	_ = controllerutil.AddFinalizer(s.remoteArbiter, RemoteArbiterFinalizer)
+
 	if err := r.Update(ctx, s.remoteArbiter); err != nil {
-		s.log.Error(err, "unable to update resource with finalizer")
-		return err
+		return fmt.Errorf("unable to update resource with finalizer: %w", err)
 	}
 
 	return nil
@@ -1190,8 +1196,7 @@ func (r *RemoteArbiterReconciler) makeRemoteClient(ctx context.Context, s *Remot
 
 	secret := &corev1.Secret{}
 	if err := r.Get(ctx, *s.remoteClusterSecretObjectKey, secret); err != nil {
-		s.log.Error(err, "unable to get secret", SecretTypeName, s.remoteClusterSecretObjectKey)
-		return err
+		return fmt.Errorf("unable to get %s %s: %w", SecretTypeName, s.remoteClusterSecretObjectKey, err)
 	}
 
 	s.remoteClusterSecret = secret
@@ -1203,15 +1208,13 @@ func (r *RemoteArbiterReconciler) makeRemoteClient(ctx context.Context, s *Remot
 
 	remoteRestConfig, err := clientcmd.RESTConfigFromKubeConfig(remoteKubeconfigBase64)
 	if err != nil {
-		s.log.Error(err, "unable to create rest config from secret", SecretTypeName, s.remoteClusterSecretObjectKey)
-		return err
+		return fmt.Errorf("unable to create rest config from %s %s: %w", SecretTypeName, s.remoteClusterSecretObjectKey, err)
 	}
 	remoteRestConfig.Timeout = s.remoteCluster.Spec.Timeout.Duration
 
 	remoteClient, err := client.New(remoteRestConfig, client.Options{})
 	if err != nil {
-		s.log.Error(err, "unable to create client from secret config", SecretTypeName, s.remoteClusterSecretObjectKey)
-		return err
+		return fmt.Errorf("unable to create client from %s %s: %w", SecretTypeName, s.remoteClusterSecretObjectKey, err)
 	}
 
 	s.remoteClusterClient = client.NewNamespacedClient(remoteClient, s.remoteCluster.Spec.Namespace)
@@ -1222,22 +1225,19 @@ func (r *RemoteArbiterReconciler) makeRemoteClient(ctx context.Context, s *Remot
 func (r *RemoteArbiterReconciler) fetchRemoteCluster(ctx context.Context, s *RemoteArbiterReconcilationState) error {
 	remoteCluster, err := r.getRemoteCluster(ctx, s.remoteArbiter)
 	if err != nil && !errors.Is(err, ErrorNotCreated) {
-		s.log.Error(err, "unable to get remote cluster")
-		return err
+		return fmt.Errorf("unable to get remote cluster: %w", err)
 	}
 	if remoteCluster != nil {
 		s.remoteCluster = remoteCluster
 		s.remoteClusterObjectKey = ObjectKeyFromObject(remoteCluster)
 		s.log.Info("remote cluster found", RemoteClusterTypeName, s.remoteClusterObjectKey)
 
-		added := controllerutil.AddFinalizer(s.remoteCluster, RemoteArbiterFinalizer)
-		if !added {
+		if added := controllerutil.AddFinalizer(s.remoteCluster, RemoteArbiterFinalizer); !added {
 			return nil
 		}
 
 		if err := r.Update(ctx, s.remoteCluster); err != nil {
-			s.log.Error(err, "unable to update resource with finalizer")
-			return err
+			return fmt.Errorf("unable to update resource with finalizer: %w", err)
 		}
 
 		return nil
@@ -1246,8 +1246,7 @@ func (r *RemoteArbiterReconciler) fetchRemoteCluster(ctx context.Context, s *Rem
 
 	remoteCluster, err = r.createRemoteCluster(ctx, s.remoteArbiter)
 	if err != nil {
-		s.log.Error(err, "unable to create remote cluster")
-		return err
+		return fmt.Errorf("unable to create remote cluster: %w", err)
 	}
 
 	s.remoteCluster = remoteCluster
@@ -1264,7 +1263,7 @@ func (r *RemoteArbiterReconciler) createRemoteCluster(ctx context.Context, remot
 
 	gvk, err := r.GroupVersionKindFor(remoteArbiter)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to get gvk: %w", err)
 	}
 	ownerRef := metav1.NewControllerRef(remoteArbiter, gvk)
 
@@ -1283,7 +1282,7 @@ func (r *RemoteArbiterReconciler) createRemoteCluster(ctx context.Context, remot
 	}
 
 	if err := r.Create(ctx, remoteCluster); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to create resource: %w", err)
 	}
 
 	return remoteCluster, nil
@@ -1291,8 +1290,7 @@ func (r *RemoteArbiterReconciler) createRemoteCluster(ctx context.Context, remot
 
 func (r *RemoteArbiterReconciler) cleanUpRemoteArbiter(ctx context.Context, s *RemoteArbiterReconcilationState) error {
 	if err := r.updateRemoteArbiterState(ctx, s.remoteArbiter, v1alpha1.RemoteArbiterDeletingState, "deleting"); err != nil {
-		s.log.Error(err, "unable to update remote arbiter state")
-		return err
+		return fmt.Errorf("unable to update remote arbiter state: %w", err)
 	}
 	s.log.Info("delete state set")
 
@@ -1303,19 +1301,17 @@ func (r *RemoteArbiterReconciler) cleanUpRemoteArbiter(ctx context.Context, s *R
 	s.log.Info("finalizer found, cleaning up remote cluster")
 
 	if err := r.cleanUpRemoteCluster(ctx, s); err != nil {
-		s.log.Error(err, "unable to clean up remote cluster")
-		return err
+		return fmt.Errorf("unable to clean up remote cluster: %w", err)
 	}
 	s.log.Info("remote cluster cleaned up")
 
 	if err := r.cleanUpCephCluster(ctx, s); err != nil {
-		s.log.Error(err, "unable to clean up ceph cluster")
-		return err
+		return fmt.Errorf("unable to clean up ceph cluster: %w", err)
 	}
+	s.log.Info("ceph cluster cleaned up")
 
 	if err := r.Update(ctx, s.remoteArbiter); err != nil {
-		s.log.Error(err, "unable to update resource after finalizer removal")
-		return err
+		return fmt.Errorf("unable to update resource after finalizer removal: %w", err)
 	}
 	s.log.Info("resource updated, finalizer removed")
 
@@ -1332,8 +1328,7 @@ func (r *RemoteArbiterReconciler) cleanUpCephCluster(ctx context.Context, s *Rem
 		s.log.Info("ceph cluster is not found, will not perform cleanup on ceph cluster")
 		return nil
 	} else if err != nil {
-		s.log.Error(err, "unable to get remote cluster")
-		return err
+		return fmt.Errorf("unable to get remote cluster: %w", err)
 	}
 
 	externalMonIDs := s.cephCluster.Spec.Mon.ExternalMonIDs
@@ -1346,8 +1341,7 @@ func (r *RemoteArbiterReconciler) cleanUpCephCluster(ctx context.Context, s *Rem
 	s.cephCluster.Spec.Mon.ExternalMonIDs = slices.Delete(externalMonIDs, idx, idx+1)
 
 	if err := r.Update(ctx, s.cephCluster); err != nil {
-		s.log.Error(err, "unable to update ceph cluster")
-		return err
+		return fmt.Errorf("unable to update ceph cluster: %w", err)
 	}
 
 	return nil
@@ -1359,8 +1353,7 @@ func (r *RemoteArbiterReconciler) cleanUpRemoteCluster(ctx context.Context, s *R
 		s.log.Info("remote cluster not found, assuming cleaned up")
 		return nil
 	} else if err != nil {
-		s.log.Error(err, "unable to get remote cluster")
-		return err
+		return fmt.Errorf("unable to get remote cluster: %w", err)
 	}
 
 	s.remoteCluster = remoteCluster
@@ -1375,14 +1368,12 @@ func (r *RemoteArbiterReconciler) cleanUpRemoteCluster(ctx context.Context, s *R
 	s.log.Info("finalizer found, cleaning up remote arbiter components", RemoteClusterTypeName, s.remoteClusterObjectKey)
 
 	if err := r.cleanUpArbiterDeployment(ctx, s); err != nil {
-		s.log.Error(err, "unable to clean up arbiter deployment components", RemoteClusterTypeName, s.remoteClusterObjectKey)
-		return err
+		return fmt.Errorf("unable to clean up arbiter deployment components %s %s: %w", RemoteClusterTypeName, s.remoteClusterObjectKey, err)
 	}
 	s.log.Info("arbiter deployment cleaned up", RemoteClusterTypeName, s.remoteClusterObjectKey)
 
 	if err := r.Update(ctx, s.remoteCluster); err != nil {
-		s.log.Error(err, "unable to update resource after finalizer removal")
-		return err
+		return fmt.Errorf("unable to update resource after finalizer removal: %w", err)
 	}
 	s.log.Info("resource updated, finalizer removed", RemoteClusterTypeName, s.remoteClusterObjectKey)
 
@@ -1404,22 +1395,21 @@ func (r *RemoteArbiterReconciler) cleanUpArbiterDeployment(ctx context.Context, 
 	objectsToDelete := []client.Object{}
 	clusterTypes := []client.Object{
 		&corev1.Secret{},
+		&corev1.Service{},
 		&corev1.ConfigMap{},
 		&appsv1.Deployment{},
 	}
 	for _, clusterType := range clusterTypes {
 		gvk, err := r.GroupVersionKindFor(clusterType)
 		if err != nil {
-			s.log.Error(err, "unable to get resource gvk", RemoteClusterTypeName, s.remoteClusterObjectKey)
-			return err
+			return fmt.Errorf("unable to get resource gvk %s %s: %w", RemoteClusterTypeName, s.remoteClusterObjectKey, err)
 		}
 
 		objectList := &unstructured.UnstructuredList{}
 		objectList.SetGroupVersionKind(gvk)
 		err = r.List(ctx, objectList, namespaceSelector, labelSelector)
 		if err != nil {
-			s.log.Error(err, "unable to list remote resources", RemoteClusterTypeName, s.remoteClusterObjectKey)
-			return err
+			return fmt.Errorf("unable to list remote resources %s %s: %w", RemoteClusterTypeName, s.remoteClusterObjectKey, err)
 		}
 
 		for _, item := range objectList.Items {
@@ -1431,8 +1421,7 @@ func (r *RemoteArbiterReconciler) cleanUpArbiterDeployment(ctx context.Context, 
 		objectKey := ObjectKeyFromObject(object)
 		gvk, err := r.GroupVersionKindFor(object)
 		if err != nil {
-			s.log.Error(err, "unable to get resource gvk", RemoteClusterTypeName, s.remoteClusterObjectKey, "key", objectKey)
-			return err
+			return fmt.Errorf("unable to get resource gvk %s %s key %s: %w", RemoteClusterTypeName, s.remoteClusterObjectKey, objectKey, err)
 		}
 
 		updated := controllerutil.RemoveFinalizer(object, RemoteArbiterFinalizer)
@@ -1442,15 +1431,13 @@ func (r *RemoteArbiterReconciler) cleanUpArbiterDeployment(ctx context.Context, 
 		}
 
 		if err := s.remoteClusterClient.Update(ctx, object); err != nil {
-			s.log.Error(err, "unable to update resource after finalizer removal", RemoteClusterTypeName, s.remoteClusterObjectKey, gvk, objectKey)
-			return err
+			return fmt.Errorf("unable to update resource after finalizer removal %s %s %s %s: %w", RemoteClusterTypeName, s.remoteClusterObjectKey, gvk, objectKey, err)
 		}
 
 		if err := s.remoteClusterClient.Delete(ctx, object); err != nil {
-			s.log.Error(err, "unable to delete resource after finalizer removal", RemoteClusterTypeName, s.remoteClusterObjectKey, gvk, objectKey)
-			return err
+			return fmt.Errorf("unable to delete resource after finalizer removal %s %s %s %s: %w", RemoteClusterTypeName, s.remoteClusterObjectKey, gvk, objectKey, err)
 		}
-		s.log.Error(err, "remote resource is marked for deletion", RemoteClusterTypeName, s.remoteClusterObjectKey, gvk, objectKey)
+		s.log.Info("remote resource is marked for deletion", RemoteClusterTypeName, s.remoteClusterObjectKey, gvk, objectKey)
 	}
 
 	s.log.Info("all remote resources are deleted", RemoteClusterTypeName, s.remoteClusterObjectKey)
@@ -1489,8 +1476,7 @@ func (r *RemoteArbiterReconciler) checkStatusInitialized(ctx context.Context, s 
 
 	s.log.Info("updating resource with init condition")
 	if err := r.updateRemoteArbiterState(ctx, s.remoteArbiter, v1alpha1.RemoteArbiterInitState, "initialized"); err != nil {
-		s.log.Error(err, "unable to update resource with conditions")
-		return err
+		return fmt.Errorf("unable to update resource with conditions: %w", err)
 	}
 
 	return nil
@@ -1513,7 +1499,7 @@ func (r *RemoteArbiterReconciler) getRemoteCluster(ctx context.Context, remoteAr
 func (r *RemoteArbiterReconciler) getRemoteClusterByOwnerReference(ctx context.Context, remoteArbiter *v1alpha1.RemoteArbiter) (*v1alpha1.RemoteCluster, error) {
 	remoteClusterList := &v1alpha1.RemoteClusterList{}
 	if err := r.List(ctx, remoteClusterList, client.InNamespace(remoteArbiter.Namespace), client.MatchingFields{RemoteClusterOwnerKey: remoteArbiter.Name}); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to list resources: %w", err)
 	}
 
 	if len(remoteClusterList.Items) == 0 {
@@ -1529,7 +1515,7 @@ func (r *RemoteArbiterReconciler) getRemoteClusterByOwnerReference(ctx context.C
 func (r *RemoteArbiterReconciler) getRemoteClusterByName(cxt context.Context, name types.NamespacedName) (*v1alpha1.RemoteCluster, error) {
 	remoteCluster := &v1alpha1.RemoteCluster{}
 	if err := r.Get(cxt, name, remoteCluster); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to get resource: %w", err)
 	}
 	return remoteCluster, nil
 }
@@ -1544,7 +1530,7 @@ func (r *RemoteArbiterReconciler) updateRemoteArbiterStatusOnFailure(
 		return nil
 	}
 	if err := r.Status().Update(ctx, remoteArbiter); err != nil {
-		return err
+		return fmt.Errorf("unable to update resource status: %w", err)
 	}
 
 	return nil
@@ -1554,12 +1540,11 @@ func (r *RemoteArbiterReconciler) updateRemoteArbiterStatusOnSuccess(
 	ctx context.Context, remoteArbiter *v1alpha1.RemoteArbiter, state v1alpha1.RemoteArbiterState, conditionType string, statusMessage string) error {
 	_ = r.setRemoteArbiterState(remoteArbiter, state, statusMessage)
 	condition := NewOKCondition(conditionType, statusMessage)
-	conditionSet := r.updateRemoteArbiterCondition(remoteArbiter, condition)
-	if !conditionSet {
+	if conditionSet := r.updateRemoteArbiterCondition(remoteArbiter, condition); !conditionSet {
 		return nil
 	}
 	if err := r.Status().Update(ctx, remoteArbiter); err != nil {
-		return err
+		return fmt.Errorf("unable to update resource status: %w", err)
 	}
 
 	return nil
@@ -1570,7 +1555,7 @@ func (r *RemoteArbiterReconciler) updateRemoteArbiterState(ctx context.Context, 
 		return nil
 	}
 	if err := r.Status().Update(ctx, remoteArbiter); err != nil {
-		return err
+		return fmt.Errorf("unable to update resource status: %w", err)
 	}
 
 	return nil
@@ -1620,7 +1605,7 @@ func (r *RemoteArbiterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}
 		return []string{owner.Name}
 	}); err != nil {
-		return err
+		return fmt.Errorf("unable to create index: %w", err)
 	}
 
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &v1alpha1.RemoteArbiter{}, RemoteArbiterCephClusterKey, func(rawObj client.Object) []string {
@@ -1631,7 +1616,7 @@ func (r *RemoteArbiterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}
 		return []string{cephClusterRef}
 	}); err != nil {
-		return err
+		return fmt.Errorf("unable to create index: %w", err)
 	}
 
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &v1alpha1.RemoteArbiter{}, RemoteArbiterRemoteClusterKey, func(rawObj client.Object) []string {
@@ -1642,7 +1627,7 @@ func (r *RemoteArbiterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}
 		return []string{remoteClusterName}
 	}); err != nil {
-		return err
+		return fmt.Errorf("unable to create index: %w", err)
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).

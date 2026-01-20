@@ -26,6 +26,12 @@ spec:
     name: my-cluster
     # namespace where CephCluster resource is located
     namespace: rook-ceph
+  # configuration for arbiter exposure via service
+  # service:
+  #   # service type
+  #   type: NodePort
+  #   # external IP of a node, is NodePort service type is used
+  #   nodeIp: 10.10.0.1
   # prefix that will be used to form wxternal monitor id, e.g. ext-a
   monIdPrefix: "ext-"
   # pod configuration

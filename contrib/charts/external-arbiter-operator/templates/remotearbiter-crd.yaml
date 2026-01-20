@@ -1114,7 +1114,17 @@ spec:
                     == 1'
               service:
                 description: Service allows to configure arbiter exposure via service
-                type: string
+                properties:
+                  nodeIp:
+                    default: ""
+                    description: NodeIP is used to specify externally resolvable node
+                      IPv4 if NodePort service type is used
+                    type: string
+                  type:
+                    default: ClusterIP
+                    description: Type allows to select service type
+                    type: string
+                type: object
             required:
             - cephCluster
             - remoteCluster

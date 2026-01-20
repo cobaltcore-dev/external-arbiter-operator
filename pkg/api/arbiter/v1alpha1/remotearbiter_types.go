@@ -75,7 +75,13 @@ type ServiceConfiguration struct {
 	// +default="ClusterIP"
 	// +example="ClusterIP"
 	// +optional
-	Type corev1.ServiceType
+	Type corev1.ServiceType `json:"type,omitempty"`
+
+	// NodeIP is used to specify externally resolvable node IPv4 if NodePort service type is used
+	// +default=""
+	// +example="10.10.0.1"
+	// +optional
+	NodeIP string `json:"nodeIp,omitempty"`
 }
 
 // RemoteArbiterSpec defines the desired state of RemoteArbiter
@@ -87,7 +93,7 @@ type RemoteArbiterSpec struct {
 
 	// Service allows to configure arbiter exposure via service
 	// +optional
-	Service *string `json:"service,omitempty"`
+	Service *ServiceConfiguration `json:"service,omitempty"`
 
 	// CheckInterval defines a reconcile period for RemoteArbiter, to check its health
 	// +default="1m"

@@ -155,7 +155,7 @@ func (in *RemoteArbiterSpec) DeepCopyInto(out *RemoteArbiterSpec) {
 	in.Deployment.DeepCopyInto(&out.Deployment)
 	if in.Service != nil {
 		in, out := &in.Service, &out.Service
-		*out = new(string)
+		*out = new(ServiceConfiguration)
 		**out = **in
 	}
 	if in.CheckInterval != nil {
