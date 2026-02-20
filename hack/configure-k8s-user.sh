@@ -48,6 +48,8 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - services
+  - services/status
   - configmaps
   - configmaps/status
   - secrets
@@ -63,6 +65,7 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - services/finalizers
   - configmaps/finalizers
   - secrets/finalizers
   verbs:
