@@ -9,11 +9,12 @@ path = [
     ".gitignore",
     ".golangci.yml",
     ".dockerignore",
-    ".helmignore"
-    "*.tpl"
+    ".helmignore",
+    "*.tpl",
     "Makefile",
     "README.md",
     "cmd/**",
+    "docs/**",
     "go.mod",
     "go.sum",
     "pkg/**",
