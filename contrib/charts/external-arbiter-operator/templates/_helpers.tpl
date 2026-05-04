@@ -1,3 +1,7 @@
+// Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
+// SPDX-License-Identifier: Apache-2.0
+
+
 {{/*
 Expand the name of the chart.
 */}}
