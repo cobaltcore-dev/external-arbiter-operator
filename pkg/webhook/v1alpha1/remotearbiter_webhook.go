@@ -5,19 +5,16 @@ package v1alpha1
 
 import (
 	"context"
-	"fmt"
 	"net/netip"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/validation"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	"github.com/cobaltcore-dev/external-arbiter-operator/pkg/api/arbiter/v1alpha1"
@@ -30,7 +27,7 @@ const (
 var remotearbiterlog = logf.Log.WithName("remotearbiter-resource")
 
 func SetupRemoteArbiterWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).For(&v1alpha1.RemoteArbiter{}).
+	return ctrl.NewWebhookManagedBy(mgr, &v1alpha1.RemoteArbiter{}).
 		WithValidator(&RemoteArbiterCustomValidator{}).
 		WithDefaulter(&RemoteArbiterCustomDefaulter{}).
 		Complete()
@@ -40,15 +37,8 @@ func SetupRemoteArbiterWebhookWithManager(mgr ctrl.Manager) error {
 
 type RemoteArbiterCustomDefaulter struct{}
 
-var _ webhook.CustomDefaulter = &RemoteArbiterCustomDefaulter{}
-
 // Default implements webhook.CustomDefaulter so a webhook will be registered for the Kind RemoteArbiter.
-func (r *RemoteArbiterCustomDefaulter) Default(_ context.Context, obj runtime.Object) error {
-	remoteArbiter, ok := obj.(*v1alpha1.RemoteArbiter)
-
-	if !ok {
-		return fmt.Errorf("expected an RemoteArbiter object but got %T", obj)
-	}
+func (r *RemoteArbiterCustomDefaulter) Default(_ context.Context, remoteArbiter *v1alpha1.RemoteArbiter) error {
 	remotearbiterlog.Info("Defaulting for RemoteArbiter", "name", remoteArbiter.GetName())
 
 	if remoteArbiter.Spec.CheckInterval == nil {
@@ -74,38 +64,21 @@ func (r *RemoteArbiterCustomDefaulter) Default(_ context.Context, obj runtime.Ob
 
 type RemoteArbiterCustomValidator struct{}
 
-var _ webhook.CustomValidator = &RemoteArbiterCustomValidator{}
-
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type RemoteArbiter.
-func (r *RemoteArbiterCustomValidator) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
-	remoteArbiter, ok := obj.(*v1alpha1.RemoteArbiter)
-	if !ok {
-		return nil, fmt.Errorf("expected a RemoteArbiter object but got %T", obj)
-	}
+func (r *RemoteArbiterCustomValidator) ValidateCreate(ctx context.Context, remoteArbiter *v1alpha1.RemoteArbiter) (warnings admission.Warnings, err error) {
 	remotearbiterlog.Info("Validation for RemoteArbiter upon creation", "name", remoteArbiter.GetName())
-
 	return r.validate(remoteArbiter)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type RemoteArbiter.
-func (r *RemoteArbiterCustomValidator) ValidateUpdate(_ context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
-	remoteArbiter, ok := newObj.(*v1alpha1.RemoteArbiter)
-	if !ok {
-		return nil, fmt.Errorf("expected a RemoteArbiter object for the newObj but got %T", newObj)
-	}
+func (r *RemoteArbiterCustomValidator) ValidateUpdate(ctx context.Context, oldObj, remoteArbiter *v1alpha1.RemoteArbiter) (warnings admission.Warnings, err error) {
 	remotearbiterlog.Info("Validation for RemoteArbiter upon update", "name", remoteArbiter.GetName())
-
 	return r.validate(remoteArbiter)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type RemoteArbiter.
-func (r *RemoteArbiterCustomValidator) ValidateDelete(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
-	remoteArbiter, ok := obj.(*v1alpha1.RemoteArbiter)
-	if !ok {
-		return nil, fmt.Errorf("expected a RemoteArbiter object but got %T", obj)
-	}
+func (r *RemoteArbiterCustomValidator) ValidateDelete(ctx context.Context, remoteArbiter *v1alpha1.RemoteArbiter) (warnings admission.Warnings, err error) {
 	remotearbiterlog.Info("Validation for RemoteArbiter upon deletion", "name", remoteArbiter.GetName())
-
 	return r.validate(remoteArbiter)
 }
 

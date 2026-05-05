@@ -5,17 +5,14 @@ package v1alpha1
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/validation"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	"github.com/cobaltcore-dev/external-arbiter-operator/pkg/api/arbiter/v1alpha1"
@@ -29,7 +26,7 @@ const (
 var remoteclusterlog = logf.Log.WithName("remotecluster-resource")
 
 func SetupRemoteClusterWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).For(&v1alpha1.RemoteCluster{}).
+	return ctrl.NewWebhookManagedBy(mgr, &v1alpha1.RemoteCluster{}).
 		WithValidator(&RemoteClusterCustomValidator{}).
 		WithDefaulter(&RemoteClusterCustomDefaulter{}).
 		Complete()
@@ -39,15 +36,8 @@ func SetupRemoteClusterWebhookWithManager(mgr ctrl.Manager) error {
 
 type RemoteClusterCustomDefaulter struct{}
 
-var _ webhook.CustomDefaulter = &RemoteClusterCustomDefaulter{}
-
 // Default implements webhook.CustomDefaulter so a webhook will be registered for the Kind RemoteCluster.
-func (r *RemoteClusterCustomDefaulter) Default(_ context.Context, obj runtime.Object) error {
-	remoteCluster, ok := obj.(*v1alpha1.RemoteCluster)
-
-	if !ok {
-		return fmt.Errorf("expected an RemoteCluster object but got %T", obj)
-	}
+func (r *RemoteClusterCustomDefaulter) Default(_ context.Context, remoteCluster *v1alpha1.RemoteCluster) error {
 	remoteclusterlog.Info("Defaulting for RemoteCluster", "name", remoteCluster.GetName())
 
 	setRemoteClusterSpecDefaults(&remoteCluster.Spec, remoteCluster.Name)
@@ -81,36 +71,20 @@ func setRemoteClusterSpecDefaults(remoteClusterSpec *v1alpha1.RemoteClusterSpec,
 
 type RemoteClusterCustomValidator struct{}
 
-var _ webhook.CustomValidator = &RemoteClusterCustomValidator{}
-
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type RemoteCluster.
-func (r *RemoteClusterCustomValidator) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
-	remoteCluster, ok := obj.(*v1alpha1.RemoteCluster)
-	if !ok {
-		return nil, fmt.Errorf("expected a RemoteCluster object but got %T", obj)
-	}
+func (r *RemoteClusterCustomValidator) ValidateCreate(_ context.Context, remoteCluster *v1alpha1.RemoteCluster) (admission.Warnings, error) {
 	remoteclusterlog.Info("Validation for RemoteCluster upon creation", "name", remoteCluster.GetName())
-
 	return r.validate(remoteCluster)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type RemoteCluster.
-func (r *RemoteClusterCustomValidator) ValidateUpdate(_ context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
-	remoteCluster, ok := newObj.(*v1alpha1.RemoteCluster)
-	if !ok {
-		return nil, fmt.Errorf("expected a RemoteCluster object for the newObj but got %T", newObj)
-	}
+func (r *RemoteClusterCustomValidator) ValidateUpdate(_ context.Context, oldObj, remoteCluster *v1alpha1.RemoteCluster) (admission.Warnings, error) {
 	remoteclusterlog.Info("Validation for RemoteCluster upon update", "name", remoteCluster.GetName())
-
 	return r.validate(remoteCluster)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type RemoteCluster.
-func (r *RemoteClusterCustomValidator) ValidateDelete(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
-	remoteCluster, ok := obj.(*v1alpha1.RemoteCluster)
-	if !ok {
-		return nil, fmt.Errorf("expected a RemoteCluster object but got %T", obj)
-	}
+func (r *RemoteClusterCustomValidator) ValidateDelete(_ context.Context, remoteCluster *v1alpha1.RemoteCluster) (admission.Warnings, error) {
 	remoteclusterlog.Info("Validation for RemoteCluster upon deletion", "name", remoteCluster.GetName())
 
 	return r.validate(remoteCluster)
