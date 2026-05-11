@@ -24,6 +24,9 @@ jobs:
         run: docker --version
       
       - name: Build image
-        run: docker build --push --label source_repository="c5413905/remotearbiter" -t keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter:1234 .
-
+        run: docker build --label source_repository="c5413905/remotearbiter" -t keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter:1234 .
+      
+      - name: Push image
+        run: docker psuh keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter:1234
+      
    
