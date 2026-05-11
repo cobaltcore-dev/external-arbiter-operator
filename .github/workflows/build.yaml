@@ -20,8 +20,8 @@ jobs:
           username: ${{ vars.KEPPEL_USERNAME }}
           password: ${{ secrets.KEPPEL_SECRET }}
 
-      - name: Check Podman version
-        run: podman --version
+      - name: Check Docker version
+        run: docker --version
       
       - name: Build image
         run: docker build --label source_repository="c5413905/remotearbiter" -t keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter:1234 .
