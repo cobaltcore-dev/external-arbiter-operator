@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Build the manager binary
-FROM golang:1.26.2 AS builder
+FROM golang:1.26 AS builder
 ARG TARGET_OS
 ARG TARGET_ARCH
 ARG BUILD_DATE
@@ -33,5 +33,6 @@ FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /workspace/manager .
 USER 65532:65532
+
 
 ENTRYPOINT ["/manager"]

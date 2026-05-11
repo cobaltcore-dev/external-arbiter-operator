@@ -1,6 +1,6 @@
 module github.com/cobaltcore-dev/external-arbiter-operator
 
-go 1.26.2
+go 1.26
 
 tool (
 	github.com/dkorunic/betteralign/cmd/betteralign
