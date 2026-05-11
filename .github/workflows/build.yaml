@@ -19,5 +19,8 @@ jobs:
 
       - name: Check Podman version
         run: podman --version
+      
+      - name: Build image
+        run: docker build --push --label source_repository="c5413905/remotearbiter" -t keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter:${{ github.sha }}  .
 
    
