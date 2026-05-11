@@ -7,7 +7,7 @@ env:
   IMAGE_NAME: user/app
 
 jobs:
-  docker:
+  container:
     runs-on: self-hosted
     steps:
       - name: Login to Docker Hub
