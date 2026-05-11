@@ -23,10 +23,14 @@ jobs:
       - name: Check Docker version
         run: docker --version
       
-      - name: Build image
-        run: docker build --label source_repository="c5413905/remotearbiter" -t keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter:1234 .
+      - name: Build 
+        run: | 
+          docker build --label source_repository="c5413905/remotearbiter" -t keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter:${{ github.sha }} \
+            -t keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter:latest  .
       
       - name: Push image
-        run: docker push keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter:1234
+        run: | 
+           docker push keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter:${{ github.sha }}
+           docker push keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter:latest
       
    
