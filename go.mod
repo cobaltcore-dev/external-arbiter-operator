@@ -53,7 +53,7 @@ replace (
 require (
 	github.com/go-logr/logr v1.4.3
 	github.com/onsi/ginkgo/v2 v2.27.4
-	github.com/onsi/gomega v1.39.0
+	github.com/onsi/gomega v1.41.0
 	github.com/rook/rook/pkg/apis v0.0.0-20260428222432-eaddeb514b8c
 	k8s.io/api v0.36.0
 	k8s.io/apimachinery v0.36.0
