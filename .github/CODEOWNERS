@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Code owners for the external-arbiter-operator repository.
+#
+# These owners will be the default owners for everything in the repo and
+# will be automatically requested for review when someone opens a pull
+# request. A review from any one of the listed owners is sufficient to
+# satisfy the code-owner review requirement (configured via repository
+# ruleset: "Require review from Code Owners" with required approving
+# review count = 1).
+#
+# Last matching pattern takes precedence.
+
+* @senolcolak @sumitarora2786
