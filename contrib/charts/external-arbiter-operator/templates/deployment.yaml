@@ -50,7 +50,7 @@ spec:
               protocol: TCP
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: 8081
             initialDelaySeconds: 15
             periodSeconds: 20
@@ -58,8 +58,8 @@ spec:
             httpGet:
               path: /readyz
               port: 8081
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            initialDelaySeconds: 10
+            periodSeconds: 15
           resources:
           {{- toYaml .Values.manager.resources | nindent 12 }}
           securityContext:

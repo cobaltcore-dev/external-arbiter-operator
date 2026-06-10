@@ -1,0 +1,57 @@
+# Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
+# SPDX-License-Identifier: Apache-2.0
+---
+imagePullSecrets: []
+
+manager:
+  image:
+    repository: keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter
+    pullPolicy: IfNotPresent
+    tag: "1234"
+  resources:
+    limits:
+      cpu: 100m
+      memory: 30Mi
+    requests:
+      cpu: 100m
+      memory: 20Mi
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - ALL
+    readOnlyRootFilesystem: true
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+replicaCount: 1
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+
+metricsService:
+  type: ClusterIP
+  port: 8443
+
+webhookService:
+  type: ClusterIP
+  port: 443
+
+useNetworkPolicies: false
+useCertManager: true
+useMonitoring: false
+
+cluster:
+  domain: cluster.local
+
+leaderElection:
+  leaderElect: true
+  resourceName: ecaf1259.cobaltcore.sap.com

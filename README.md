@@ -60,19 +60,19 @@ kubectl apply -f ./rook/deploy/examples/toolbox.yaml
 # build image 
 limactl shell k8s sudo nerdctl --namespace k8s.io build -t localhost:5000/cobaltcore-dev/external-arbiter-operator:latest -f ./Dockerfile .
 # dry run operator install via helm
-helm install --dry-run --create-namespace --namespace arbiter-operator --values ./contrib/charts/external-arbiter-operator/local.yaml arbiter-operator ./contrib/charts/external-arbiter-operator 
+helm install --dry-run --create-namespace --namespace external-arbiter  --values ./contrib/charts/external-arbiter-operator/remote.yaml arbiter-operator ./contrib/charts/external-arbiter-operator 
 # install operator via helm chart
-helm install --create-namespace --namespace arbiter-operator --values ./contrib/charts/external-arbiter-operator/local.yaml arbiter-operator ./contrib/charts/external-arbiter-operator
+helm install --create-namespace --namespace external-arbiter  --values ./contrib/charts/external-arbiter-operator/remote.yaml arbiter-operator ./contrib/charts/external-arbiter-operator
 # create namespace, user, role, rolebinding, kubeconfig and secret for arbiter
 ./hack/configure-k8s-user.sh
 # create secret with remote cluster access configuration produced on previous step
-kubectl apply -f ./contrib/k8s/examples/secret.yaml -n arbiter-operator
-# create remote cluster
-kubectl apply -f ./contrib/k8s/examples/remote-cluster.yaml -n arbiter-operator
+kubectl apply -f ./contrib/k8s/examples/secret.yaml -n external-arbiter 
+# create remote cluster external-arbiter
+kubectl apply -f ./contrib/k8s/examples/remote-cluster.yaml -n external-arbiter
 # create remote arbiter
-kubectl apply -f ./contrib/k8s/examples/remote-arbiter.yaml -n arbiter-operator
+kubectl apply -f ./contrib/k8s/examples/remote-arbiter.yaml -n external-arbiter
 # watch until arbiter ready
-kubectl get remotearbiter -n arbiter-operator -w
+kubectl get remotearbiter -n external-arbiter -w
 # check arbiter joined quorum
 kubectl exec deployment/rook-ceph-tools -n rook-ceph -it -- ceph mon dump
 # remove chart

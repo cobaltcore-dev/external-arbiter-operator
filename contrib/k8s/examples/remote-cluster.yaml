@@ -5,6 +5,7 @@ apiVersion: ceph.cobaltcore.sap.com/v1alpha1
 kind: RemoteCluster
 metadata:
   name: external-arbiter
+  namespace: external-arbiter
 spec:
   # target namespace to deploy arbiter
   namespace: external-arbiter

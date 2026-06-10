@@ -2,6 +2,8 @@
 # Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
 # SPDX-License-Identifier: Apache-2.0
 
+set -e
+
 if [ ! -f ./external-arbiter.key ]; then
     openssl genrsa -out external-arbiter.key 2048
 fi
@@ -22,10 +24,10 @@ spec:
     - client auth
 EOF
 )
-echo "$csrResource" | kubectl apply -f -
+echo "$csrResource" | u8s kubectl apply -f -
 
-kubectl certificate approve external-arbiter-csr
-kubectl get csr external-arbiter-csr -o jsonpath='{.status.certificate}' | base64 --decode > external-arbiter.crt
+u8s kubectl -n external-arbiter certificate approve external-arbiter-csr
+u8s kubectl get csr external-arbiter-csr -o jsonpath='{.status.certificate}' | base64 --decode > external-arbiter.crt
 
 namespace=$(cat <<EOF
 ---
@@ -33,9 +35,10 @@ apiVersion: v1
 kind: Namespace
 metadata:
     name: external-arbiter
+    namespace: external-arbiter
 EOF
 )
-echo "$namespace" | kubectl apply -f -
+echo "$namespace" | u8s kubectl apply -f -
 
 role=$(cat <<EOF
 ---
@@ -91,7 +94,7 @@ rules:
   - update
 EOF
 )
-echo "$role" | kubectl apply -f -
+echo "$role" | u8s kubectl --namespace=external-arbiter apply -f -
 
 roleBinding=$(cat <<EOF
 ---
@@ -109,13 +112,13 @@ subjects:
     name: external-arbiter
 EOF
 )
-echo "$roleBinding" | kubectl apply -f -
+echo "$roleBinding" | u8s kubectl  --namespace=external-arbiter apply -f -
 
-kubectl get cm kube-root-ca.crt -o jsonpath="{['data']['ca\.crt']}" > k8s-ca.crt
-kubectl config set-cluster kubernetes --server=https://192.168.5.15:6443 --certificate-authority=k8s-ca.crt --embed-certs=true --kubeconfig=external-arbiter.kubeconfig
-kubectl config set-credentials external-arbiter --client-certificate=external-arbiter.crt --client-key=external-arbiter.key --embed-certs=true --kubeconfig=external-arbiter.kubeconfig
-kubectl config set-context external-arbiter@kubernetes --cluster=kubernetes --user=external-arbiter --kubeconfig=external-arbiter.kubeconfig
-kubectl config use-context external-arbiter@kubernetes --kubeconfig=external-arbiter.kubeconfig
+u8s kubectl get cm kube-root-ca.crt -o jsonpath="{['data']['ca\.crt']}" > k8s-ca.crt
+u8s kubectl config set-cluster kubernetes --server=https://st1-qa-de-1-c67f19d507d543a3a9eaa3607729826f.kubernikus-v.qa-de-1.cloud.sap --certificate-authority=k8s-ca.crt --embed-certs=true --kubeconfig="/Users/C5413905/Library/Application Support/SAPCC/u8s/.kube/config"
+u8s kubectl config set-credentials external-arbiter --client-certificate=external-arbiter.crt --client-key=external-arbiter.key --embed-certs=true --kubeconfig="/Users/C5413905/Library/Application Support/SAPCC/u8s/.kube/config"
+u8s kubectl config set-context external-arbiter@kubernetes --cluster=kubernetes --user=external-arbiter --kubeconfig="/Users/C5413905/Library/Application Support/SAPCC/u8s/.kube/config"
+u8s kubectl config use-context external-arbiter@kubernetes --kubeconfig="/Users/C5413905/Library/Application Support/SAPCC/u8s/.kube/config"
 
 kubeconfig=$(cat ./external-arbiter.kubeconfig | base64 | tr -d '\n')
 secret=$(cat <<EOF
