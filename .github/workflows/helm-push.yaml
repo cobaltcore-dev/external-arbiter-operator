@@ -1,7 +1,6 @@
 name: Package Helm chart and publish to Helm chars registry
 
-on:
-  push:
+
 #env:
 #  REGISTRY: ghcr.io
 #  ACTIONS_RUNNER_DEBUG: false
@@ -23,14 +22,14 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Login to registry
-        uses: docker/login-action@latest
+        uses: docker/login-action@v4
         with:
           registry: ${{ vars.KEPPEL_REGISTRY }}
           username: ${{ vars.KEPPEL_USERNAME }}
           password: ${{ secrets.KEPPEL_SECRET }}
 
       - name: Set up chart-testing
-        uses: helm/chart-testing-action@latest
+        uses: helm/chart-testing-action@v2.6.1
 
       - name: Run chart-testing (list-changed)
         id: list-changed
