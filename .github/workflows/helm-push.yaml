@@ -1,6 +1,6 @@
 name: Package Helm chart and publish to Helm chars registry
-
-
+on:
+  push:
 #env:
 #  REGISTRY: ghcr.io
 #  ACTIONS_RUNNER_DEBUG: false
