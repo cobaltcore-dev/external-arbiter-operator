@@ -1,12 +1,5 @@
 name: Package Helm chart and publish to Helm chars registry
 
-on:
-  workflow_run: 
-  workflows: ["ci-build"]
-    branches:
-      - master
-    types:
-      - completed
 #env:
 #  REGISTRY: ghcr.io
 #  ACTIONS_RUNNER_DEBUG: false
