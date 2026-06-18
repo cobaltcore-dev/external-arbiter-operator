@@ -1,10 +1,10 @@
-name: ci
+name: ci-build
 
 on:
   push:
 
-env:
-  IMAGE_NAME: user/app
+#env:
+  #IMAGE_NAME: user/app
 
 jobs:
   container:
@@ -13,7 +13,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Login to Docker Hub
+      - name: Login to registry
         uses: docker/login-action@v4
         with:
           registry: ${{ vars.KEPPEL_REGISTRY }}
@@ -32,5 +32,8 @@ jobs:
         run: | 
            docker push keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter:${{ github.sha }}
            docker push keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter:latest
+  
+  helm_packaging:
+
       
    

@@ -38,3 +38,4 @@ contrib/k8s/3rdparty
 *.key
 *.crt
 *.kubeconfig
+contrib/charts/external-arbiter-operator/external-arbiter-operator-*.tgz
