@@ -67,6 +67,7 @@ jobs:
       - name: Push Charts to GHCR
       #  if: steps.list-changed.outputs.changed == 'true' && steps.check-chart.outputs.bump != 'true'
         run: |
+            cd contrib/charts/external-arbiter-operator
             helm package .
             PKG_NAME=`ls $chart/*.tgz`
             helm push ${PKG_NAME} oci://${{ vars.KEPPEL_REGISTRY }}/ccloud/c5413905/remotearbiter/
