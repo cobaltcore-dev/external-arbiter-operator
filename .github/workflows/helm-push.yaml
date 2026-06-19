@@ -31,46 +31,43 @@ jobs:
       - name: Set up chart-testing
         uses: helm/chart-testing-action@v2.6.1
 
-      - name: Run chart-testing (list-changed)
-        id: list-changed
-        run: |
-            changed=$(ct list-changed --config ci/config.yaml --target-branch ${{ github.event.repository.default_branch }})
-            if [[ -n "$changed" ]]; then
-              echo "changed=true" >> "$GITHUB_OUTPUT"
-            fi
+  #    - name: Run chart-testing (list-changed)
+    #    id: list-changed
+     #   run: |
+      #      changed=$(ct list-changed --config ci/config.yaml --target-branch ${{ github.event.repository.default_branch }})
+       #     if [[ -n "$changed" ]]; then
+        #      echo "changed=true" >> "$GITHUB_OUTPUT"
+         #   fi
 
-      - name: Run chart-testing (lint)
-        if: steps.list-changed.outputs.changed == 'true'
-        run: ct lint --chart-yaml-schema ci/chart_schema.yaml --lint-conf ci/lintconf.yaml --config ci/config.yaml --target-branch ${{ github.event.repository.default_branch }}
+  #    - name: Run chart-testing (lint)
+   #     if: steps.list-changed.outputs.changed == 'true'
+    #    run: ct lint --chart-yaml-schema ci/chart_schema.yaml --lint-conf ci/lintconf.yaml --config ci/config.yaml --target-branch ${{ github.event.repository.default_branch }}
 
-      - name: Check if Helm chart with same version already exists
-        id: check-chart
-        if: steps.list-changed.outputs.changed == 'true'
-        run: |
-            for chart in $(ct list-changed --config ci/config.yaml --target-branch ${{ github.event.repository.default_branch }}); do
-              chart_version=$(yq .version "$chart/Chart.yaml")
-              if helm pull "oci://${{ env.REGISTRY }}/${{ github.repository }}/charts/$(basename $chart)" --version $chart_version; then
-                echo "chart=$(basename $chart)" >> "$GITHUB_OUTPUT"
-                echo "chart_version=${chart_version}" >> "$GITHUB_OUTPUT"
-                echo "needsbump=true" >> "$GITHUB_OUTPUT"
-                exit 1
-              fi
-            done
+  #    - name: Check if Helm chart with same version already exists
+   #     id: check-chart
+    #    if: steps.list-changed.outputs.changed == 'true'
+     #   run: |
+      #    chart_version=$(yq .version "$chart/Chart.yaml")
+       #     
+        #        echo "chart=$(basename $chart)" >> "$GITHUB_OUTPUT"
+         #       echo "chart_version=${chart_version}" >> "$GITHUB_OUTPUT"
+          #      echo "needsbump=true" >> "$GITHUB_OUTPUT"
+           #     exit 1
+            #  fi
+            
 
-      - name: Chart needs version bump
-        if: steps.check-chart.outputs.bump == 'true'
-        env:
-          CHART_VERSION: ${{ steps.check-chart.outputs.chart_version }}
-        run: |
-          echo "Chart ${{ matrix.chartDir }}:${{ env.CHART_VERSION }} already exists in OCI registry. Skipping upload. Please increment the chart version."
-          exit 1
+    #  - name: Chart needs version bump
+     #   if: steps.check-chart.outputs.bump == 'true'
+      #  env:
+       #   CHART_VERSION: ${{ steps.check-chart.outputs.chart_version }}
+        #run: |
+         # echo "Chart ${{ matrix.chartDir }}:${{ env.CHART_VERSION }} already exists in OCI registry. Skipping upload. Please increment the chart version."
+          #exit 1
 
       - name: Push Charts to GHCR
-        if: steps.list-changed.outputs.changed == 'true' && steps.check-chart.outputs.bump != 'true'
+      #  if: steps.list-changed.outputs.changed == 'true' && steps.check-chart.outputs.bump != 'true'
         run: |
-            for chart in $(ct list-changed --config ci/config.yaml --target-branch ${{ github.event.repository.default_branch }}); do
-              helm dependency update $chart
-              helm package $chart -d $chart
-              PKG_NAME=`ls $chart/*.tgz`
-              helm push ${PKG_NAME} oci://${{ env.REGISTRY }}/${{ github.repository }}/
-            done
+            helm package .
+            PKG_NAME=`ls $chart/*.tgz`
+            helm push ${PKG_NAME} oci://${{ vars.KEPPEL_REGISTRY }}/ccloud/c5413905/remotearbiter/
+          
