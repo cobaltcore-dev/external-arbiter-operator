@@ -69,6 +69,7 @@ jobs:
         run: |
             cd contrib/charts/external-arbiter-operator
             helm package .
-            PKG_NAME=`ls $chart/*.tgz`
+            ls *.tgz
+            PKG_NAME=`ls *.tgz`
             helm push ${PKG_NAME} oci://${{ vars.KEPPEL_REGISTRY }}/ccloud/c5413905/remotearbiter/
           
