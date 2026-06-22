@@ -67,12 +67,8 @@ jobs:
       - name: Push Charts to GHCR
       #  if: steps.list-changed.outputs.changed == 'true' && steps.check-chart.outputs.bump != 'true'
         run: |
-            helm registry login
-            with:
-              registry: ${{ vars.KEPPEL_REGISTRY }}
-              username: ${{ vars.KEPPEL_USERNAME }}
-              password: ${{ secrets.KEPPEL_SECRET }}
-
+            echo ${{ secrets.KEPPEL_SECRET }} | helm registry login ${{ vars.KEPPEL_REGISTRY }} --username ${{ vars.KEPPEL_USERNAME }} --password-stdin
+        
             cd contrib/charts/external-arbiter-operator
             helm package .
             ls *.tgz
