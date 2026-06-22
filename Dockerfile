@@ -36,3 +36,5 @@ USER 65532:65532
 
 
 ENTRYPOINT ["/manager"]
+
+LABEL source_repository="https://github.com/cobaltcore-dev/external-arbiter-operator"
