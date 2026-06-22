@@ -55,3 +55,9 @@ cluster:
 leaderElection:
   leaderElect: true
   resourceName: ecaf1259.cobaltcore.sap.com
+
+owner-info:
+  support-group: ceph-project
+  maintainers:
+    - Konstantin Kauz
+  helm-chart-url: https://keppel.eu-de-1.cloud.sap/ccloud-helm/external-arbiter-operator
