@@ -70,8 +70,8 @@ jobs:
             echo ${{ secrets.KEPPEL_SECRET }} | helm registry login ${{ vars.KEPPEL_REGISTRY }} --username ${{ vars.KEPPEL_USERNAME }} --password-stdin
         
             cd contrib/charts/external-arbiter-operator
-            helm package .
+            helm package --label source_repository="https://github.com/cobaltcore-dev/external-arbiter-operator" .
             ls *.tgz
             PKG_NAME=`ls *.tgz`
-            helm push ${PKG_NAME} oci://${{ vars.KEPPEL_REGISTRY }}/ccloud/c5413905/remotearbiter/
+            helm push --label source_repository="https://github.com/cobaltcore-dev/external-arbiter-operator" ${PKG_NAME} oci://${{ vars.KEPPEL_REGISTRY }}/ccloud/c5413905/remotearbiter/
           
