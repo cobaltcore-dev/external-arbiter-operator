@@ -5,7 +5,7 @@ imagePullSecrets: []
 
 manager:
   image:
-    repository: localhost:5000/cobaltcore-dev/external-arbiter-operator
+    repository: keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter
     pullPolicy: IfNotPresent
     tag: "latest"
   resources:
@@ -54,7 +54,7 @@ cluster:
 
 leaderElection:
   leaderElect: true
-  resourceName: ecaf1259.cobaltcore.sap.com
+  resourceName: t1-qa-de-1-c67f19d507d543a3a9eaa3607729826f.kubernikus-v.qa-de-1.cloud.sap
 
 owner-info:
   support-group: ceph-project
