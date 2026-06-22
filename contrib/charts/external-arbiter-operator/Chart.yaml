@@ -4,6 +4,9 @@
 apiVersion: v2
 name: external-arbiter-operator
 description: A Helm chart for Kubernetes
+annotations:
+    source_repository: "https://github.com/cobaltcore-dev/external-arbiter-operator"
+
 
 # A chart can be either an 'application' or a 'library' chart.
 #
