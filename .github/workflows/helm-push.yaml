@@ -62,9 +62,9 @@ jobs:
         run: |
             echo ${{ secrets.KEPPEL_SECRET }} | helm registry login ${{ vars.KEPPEL_REGISTRY }} --username ${{ vars.KEPPEL_USERNAME }} --password-stdin
         
-            cd contrib/charts/external-arbiter-operator
+            cd contrib/charts/external-arbiter
             helm package .
             ls *.tgz
             PKG_NAME=`ls *.tgz`
-            helm push ${PKG_NAME} oci://${{ vars.KEPPEL_REGISTRY }}/ccloud-helm/remotearbiter/
+            helm push ${PKG_NAME} oci://${{ vars.KEPPEL_REGISTRY }}/ccloud-helm/
           
