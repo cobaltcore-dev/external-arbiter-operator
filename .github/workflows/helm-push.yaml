@@ -63,6 +63,7 @@ jobs:
             echo ${{ secrets.KEPPEL_SECRET }} | helm registry login ${{ vars.KEPPEL_REGISTRY }} --username ${{ vars.KEPPEL_USERNAME }} --password-stdin
         
             cd contrib/charts/external-arbiter-operator
+            helm dep up
             helm package .
             ls *.tgz
             PKG_NAME=`ls *.tgz`
