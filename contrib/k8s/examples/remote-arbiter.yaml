@@ -26,7 +26,7 @@ spec:
   # reference to rook-provisioned ceph cluster (CephCluster resource)
   cephCluster:
     # name of CephCluster resource
-    name: my-cluster
+    name: ceph-cluster
     # namespace where CephCluster resource is located
     namespace: rook-ceph
   # configuration for arbiter exposure via service

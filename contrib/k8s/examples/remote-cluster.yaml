@@ -11,9 +11,9 @@ spec:
   # reference to k8s secret with kubeconfig at the same namespace
   accesskeyRef:
     # name of the secret
-    name: external-arbiter
+    name: sh.helm.release.v1.external-arbiter.v3
     # key in provided secret
-    key: "kubeconfig.yaml"
+    key: "release"
   # interval between running cluster check
   # 0 to disable
   checkInterval: 1m

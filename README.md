@@ -63,7 +63,7 @@ limactl shell k8s sudo nerdctl --namespace k8s.io build -t localhost:5000/cobalt
 helm install --dry-run --create-namespace --namespace arbiter-operator --values ./contrib/charts/external-arbiter-operator/local.yaml arbiter-operator ./contrib/charts/external-arbiter-operator 
 # install operator via helm chart
 helm install --create-namespace --namespace arbiter-operator --values ./contrib/charts/external-arbiter-operator/local.yaml arbiter-operator ./contrib/charts/external-arbiter-operator
-# create namespace, user, role, rolebinding, kubeconfig and secret for arbiter
+# create namespace, user, role, rolebinding, kubeconfig and secret for arbiter <<REMOTE CLUSTER>>
 ./hack/configure-k8s-user.sh
 # create secret with remote cluster access configuration produced on previous step
 kubectl apply -f ./contrib/k8s/examples/secret.yaml -n arbiter-operator
