@@ -50,7 +50,7 @@ spec:
               protocol: TCP
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: 8081
             initialDelaySeconds: 50
             periodSeconds: 100
