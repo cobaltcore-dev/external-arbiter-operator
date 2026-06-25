@@ -48,18 +48,18 @@ spec:
             - containerPort: 9443
               name: webhook-server
               protocol: TCP
-          livenessProbe:
-            httpGet:
-              path: /readyz
-              port: 8081
-            initialDelaySeconds: 50
-            periodSeconds: 100
-          readinessProbe:
-            httpGet:
-              path: /readyz
-              port: 8081
-            initialDelaySeconds: 50
-            periodSeconds: 100
+  #        livenessProbe:
+   #         httpGet:
+    #          path: /readyz
+     #         port: 8081
+      #      initialDelaySeconds: 50
+       #     periodSeconds: 100
+       #   readinessProbe:
+       #     httpGet:
+        #      path: /readyz
+        #      port: 8081
+        #    initialDelaySeconds: 50
+        #    periodSeconds: 100
           resources:
           {{- toYaml .Values.manager.resources | nindent 12 }}
           securityContext:
