@@ -1,0 +1,22 @@
+# Source: external-arbiter-operator/templates/webhook-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: arbiter-operator-webhook-service
+  labels:
+    helm.sh/chart: external-arbiter-operator-0.2.1
+    app.kubernetes.io/name: external-arbiter-operator
+    app.kubernetes.io/instance: external-arbiter
+    app.kubernetes.io/version: "0.2.1"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+  - port: 443
+    protocol: TCP
+    targetPort: 9443
+  selector:
+    control-plane: external-arbiter-controller-manager
+    app.kubernetes.io/name: external-arbiter-operator
+    app.kubernetes.io/instance: external-arbiter
+---
