@@ -30,6 +30,7 @@ jobs:
       
       - name: Push image
         run: | 
+           echo "using image tag -> ${{ github.sha }}"
            docker push keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter:${{ github.sha }}
            docker push keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter:latest
   
