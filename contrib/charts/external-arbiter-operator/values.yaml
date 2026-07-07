@@ -7,7 +7,7 @@ manager:
   image:
     repository: keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter
     pullPolicy: IfNotPresent
-    tag: "eca52cf5c832373599629e623527d528b930138d"
+    tag: "9cb74221376571a9a1e45f62032520bb18504f85"
   resources:
     limits:
       cpu: 200m
