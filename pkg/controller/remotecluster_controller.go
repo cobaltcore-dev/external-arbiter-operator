@@ -327,6 +327,7 @@ func (r *RemoteClusterReconciler) makeRemoteClient(s *RemoteClusterReconcilation
 
 	remoteRestConfig, err := clientcmd.RESTConfigFromKubeConfig(remoteKubeconfigBase64)
 	if err != nil {
+		s.log.Info("used content => %s", remoteKubeconfigBase64)
 		return fmt.Errorf("unable to create rest config from %s %s: %w", SecretTypeName, s.secretObjectKey, err)
 	}
 	remoteRestConfig.Timeout = s.remoteCluster.Spec.Timeout.Duration
