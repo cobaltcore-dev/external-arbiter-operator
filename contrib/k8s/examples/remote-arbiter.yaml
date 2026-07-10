@@ -10,6 +10,13 @@ spec:
   remoteCluster:
     # name of remote cluster in the same namespace
     name: external-arbiter
+    resources:
+      limits:
+        cpu: 200m
+        memory: 200Mi
+      requests:
+        cpu: 200m
+        memory: 200Mi
     # alternatively, a spec for remote cluster can be defined
     # in this case, remote arbiter controller will take care of remote cluster creation
     # spec:
