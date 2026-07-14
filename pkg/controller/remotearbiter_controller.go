@@ -568,9 +568,15 @@ func (r *RemoteArbiterReconciler) makeDeploymentSpec(s *RemoteArbiterReconcilati
 }
 
 func (r *RemoteArbiterReconciler) determinePublicAddress(s *RemoteArbiterReconcilationState) (string, error) {
+	log := logf.Log.WithName("determine-public-address")
+
 	if s.arbiterService == nil {
-		return "$(ROOK_POD_IP)", nil
+		address, err := PreferedSourceIP("8.8.8.8:53")
+		log.Info("using followed address -> %s", address.String())
+		return address.String(), err
 	}
+
+	log.Info("service available, try to use it...")
 
 	switch s.arbiterService.Spec.Type {
 	case corev1.ServiceTypeClusterIP:

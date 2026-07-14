@@ -5,18 +5,18 @@ apiVersion: ceph.cobaltcore.sap.com/v1alpha1
 kind: RemoteArbiter
 metadata:
   name: external-arbiter
+resources:
+    limits:
+      cpu: 200m
+      memory: 200Mi
+    requests:
+      cpu: 200m
+      memory: 200Mi
 spec:
   # remote cluster where arbiter will be deployed
   remoteCluster:
     # name of remote cluster in the same namespace
     name: external-arbiter
-    resources:
-      limits:
-        cpu: 200m
-        memory: 200Mi
-      requests:
-        cpu: 200m
-        memory: 200Mi
     # alternatively, a spec for remote cluster can be defined
     # in this case, remote arbiter controller will take care of remote cluster creation
     # spec:
@@ -38,7 +38,7 @@ spec:
     namespace: rook-ceph
   # configuration for arbiter exposure via service
   # service:
-  #   # service type
+  #   # service typeresources:
   #   type: NodePort
   #   # external IP of a node, is NodePort service type is used
   #   nodeIp: 10.10.0.1
@@ -54,4 +54,5 @@ spec:
   #   nodeSelector:
   # interval to check remote arbiter health
   # 0 to disable
+
   checkInterval: 1m
