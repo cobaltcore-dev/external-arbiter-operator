@@ -571,20 +571,19 @@ func (r *RemoteArbiterReconciler) determinePublicAddress(s *RemoteArbiterReconci
 	log := logf.Log.WithName("determine-public-address")
 
 	if s.arbiterService == nil {
-		address, err := PreferedSourceIP("8.8.8.8:53")
-		log.Info("using followed address -> %s", address.String())
-		return address.String(), err
+		log.Info("Using pod IP")
+		return "$(ROOK_POD_IP)", nil
 	}
-
-	log.Info("service available, try to use it...")
 
 	switch s.arbiterService.Spec.Type {
 	case corev1.ServiceTypeClusterIP:
 		if s.arbiterService.Spec.ClusterIP == "" {
 			return "", errors.New("service cluster ip is not yet allocated")
 		}
+		log.Info("Using pod ClusterIP")
 		return s.arbiterService.Spec.ClusterIP, nil
 	case corev1.ServiceTypeNodePort:
+		log.Info("Using pod NodeIP")
 		return s.remoteArbiter.Spec.Service.NodeIP, nil
 	case corev1.ServiceTypeLoadBalancer:
 		if len(s.arbiterService.Status.LoadBalancer.Ingress) == 0 {
@@ -598,6 +597,7 @@ func (r *RemoteArbiterReconciler) determinePublicAddress(s *RemoteArbiterReconci
 			if !parsedIP.Is4() {
 				continue
 			}
+			log.Info("Using pod IngressIP")
 			return ingress.IP, nil
 		}
 		return "", errors.New("load balancer ingress has no IPv4 address")
