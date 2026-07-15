@@ -5,13 +5,7 @@ apiVersion: ceph.cobaltcore.sap.com/v1alpha1
 kind: RemoteArbiter
 metadata:
   name: external-arbiter
-resources:
-    limits:
-      cpu: 200m
-      memory: 200Mi
-    requests:
-      cpu: 200m
-      memory: 200Mi
+#resources:
 spec:
   # remote cluster where arbiter will be deployed
   remoteCluster:
@@ -45,13 +39,21 @@ spec:
   # prefix that will be used to form wxternal monitor id, e.g. ext-a
   monIdPrefix: "ext-"
   # pod configuration
-  # deployment:
+  deployment:
   #   # pod affinity rules
-  #   affinity:
+      affinity:
   #   # pod resource requirements and limits
-  #   resources:
+      resources:
+          limits:
+            cpu: 200m
+            memory: 200Mi
+          requests:
+            cpu: 200m
+            memory: 200Mi
+        
   #   # node selector
-  #   nodeSelector:
+      nodeSelector:
+         kubernetes.cloud.sap/host: "node017-ap066.cc.qa-de-1.cloud.sap"
   # interval to check remote arbiter health
   # 0 to disable
 
