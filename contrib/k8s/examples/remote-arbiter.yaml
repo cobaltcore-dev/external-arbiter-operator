@@ -49,11 +49,11 @@ spec:
             memory: 200Mi
           requests:
             cpu: 100m
-            memory: 100Mi
+            memory: 300Mi
         
   #   # node selector
-      nodeSelector:
-         kubernetes.cloud.sap/host: "node017-ap066.cc.qa-de-1.cloud.sap"
+   #   nodeSelector:
+    #     kubernetes.cloud.sap/host: "node017-ap066.cc.qa-de-1.cloud.sap"
   # interval to check remote arbiter health
   # 0 to disable
 
