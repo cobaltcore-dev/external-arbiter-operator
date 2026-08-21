@@ -8,11 +8,30 @@
 
 ## About this project
 
-external-arbiter-operator works with [rook](https://rook.io/)-provisioned ceph clusters and deploys 
+external-arbiter-operator works with [rook](https://rook.io/)-provisioned ceph clusters and deploys
 external, not managed by rook, arbiter (monitor), that participates in consensus.
 
 Operator also monitors remote cluster and checks whether cluster is available and tenant has enough
 permissions to handle arbiter deployment.
+
+## Architecture
+
+![External Arbiter Operator for Ceph / Rook — conceptual quorum-resilience architecture](docs/assets/purpose-external-arbiter-operator.png)
+
+**Problem:** A Ceph cluster spanning two availability zones (AZ-A and AZ-B) holds only two monitors
+(`mon.a` and `mon.b`). If the AZ interconnect fails, neither side can reach a majority — quorum is
+lost and Ceph can no longer safely make decisions about cluster state.
+
+**Operator:** The External Arbiter Operator reads the `CephCluster` resource, reserves an
+`externalMonID`, creates the necessary resources on a remote/independent cluster, and continuously
+reconciles updates.
+
+**Solution:** A third monitor (`mon.ext-a`) runs on a remote, independent cluster. With three
+monitors a single AZ or network failure can no longer break quorum — two of the three monitors
+remain reachable and consensus is maintained.
+
+> **Scope:** Arbiter restores *control-plane quorum* — it does not guarantee data redundancy between
+> OSDs. Ensure your data-replication policy is configured separately.
 
 ## Requirements and Setup
 
