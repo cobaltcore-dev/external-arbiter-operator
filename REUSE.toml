@@ -17,6 +17,7 @@ path = [
     "go.mod",
     "go.sum",
     "pkg/**",
+    "docs/**",
     "REUSE.toml"
 ]
 precedence = "aggregate"
