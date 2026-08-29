@@ -5,16 +5,16 @@ imagePullSecrets: []
 
 manager:
   image:
-    repository: localhost:5000/cobaltcore-dev/external-arbiter-operator
+    repository: keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter
     pullPolicy: IfNotPresent
-    tag: "latest"
+    tag: "fae519209524fad5e73ff7e8be375bcabb36a326"
   resources:
     limits:
-      cpu: 100m
-      memory: 30Mi
+      cpu: 200m
+      memory: 200Mi
     requests:
-      cpu: 100m
-      memory: 20Mi
+      cpu: 200m
+      memory: 200Mi
   securityContext:
     allowPrivilegeEscalation: false
     capabilities:
@@ -52,6 +52,13 @@ useMonitoring: true
 cluster:
   domain: cluster.local
 
+# 
 leaderElection:
   leaderElect: true
-  resourceName: ecaf1259.cobaltcore.sap.com
+  resourceName: t1-qa-de-1-c67f19d507d543a3a9eaa3607729826f.kubernikus-v.qa-de-1.cloud.sap
+
+owner-info:
+  support-group: ceph-project
+  maintainers:
+    - Konstantin Kauz
+  helm-chart-url: https://keppel.eu-de-1.cloud.sap/ccloud-helm/external-arbiter-operator

@@ -5,6 +5,7 @@ apiVersion: ceph.cobaltcore.sap.com/v1alpha1
 kind: RemoteArbiter
 metadata:
   name: external-arbiter
+#resources:
 spec:
   # remote cluster where arbiter will be deployed
   remoteCluster:
@@ -26,25 +27,34 @@ spec:
   # reference to rook-provisioned ceph cluster (CephCluster resource)
   cephCluster:
     # name of CephCluster resource
-    name: my-cluster
+    name: ceph-cluster
     # namespace where CephCluster resource is located
     namespace: rook-ceph
   # configuration for arbiter exposure via service
   # service:
-  #   # service type
+  #   # service typeresources:
   #   type: NodePort
   #   # external IP of a node, is NodePort service type is used
   #   nodeIp: 10.10.0.1
   # prefix that will be used to form wxternal monitor id, e.g. ext-a
   monIdPrefix: "ext-"
   # pod configuration
-  # deployment:
+  deployment:
   #   # pod affinity rules
-  #   affinity:
+      affinity:
   #   # pod resource requirements and limits
-  #   resources:
+      resources:
+          limits:
+            cpu: 200m
+            memory: 200Mi
+          requests:
+            cpu: 100m
+            memory: 300Mi
+        
   #   # node selector
-  #   nodeSelector:
+   #   nodeSelector:
+    #     kubernetes.cloud.sap/host: "node017-ap066.cc.qa-de-1.cloud.sap"
   # interval to check remote arbiter health
   # 0 to disable
+
   checkInterval: 1m
