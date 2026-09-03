@@ -123,9 +123,21 @@ func MonitorDeployment(opts ...Option) *appsv1.Deployment {
 	}
 
 	chownContainer := corev1.Container{
-		Name:         "chown-container-data-dir",
-		Image:        defaultImage,
-		Command:      []string{"chown"},
+		Name:    "chown-container-data-dir",
+		Image:   defaultImage,
+		Command: []string{"chown"},
+		// Mirror the real Rook chown initContainer: the data-dir path arg
+		// (/var/lib/ceph/mon/ceph-a) is what modifyContainers rewrites to the
+		// arbiter's mon ID. Without it that rewrite branch is untested.
+		Args: []string{
+			"--verbose",
+			"--recursive",
+			"ceph:ceph",
+			"/var/log/ceph",
+			"/var/lib/ceph/crash",
+			"/run/ceph",
+			"/var/lib/ceph/mon/ceph-a",
+		},
 		VolumeMounts: monVolumeMounts(),
 	}
 

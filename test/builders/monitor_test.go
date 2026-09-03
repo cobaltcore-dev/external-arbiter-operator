@@ -69,6 +69,25 @@ func TestMonitorDeploymentContract(t *testing.T) {
 		t.Error("mon container must expose ROOK_CEPH_MON_HOST from the env-var secret")
 	}
 
+	// The chown initContainer must carry a /var/lib/ceph/mon/ceph-… path arg:
+	// modifyContainers rewrites it to the arbiter's mon ID by prefix match, and
+	// an absent arg makes that rewrite silently no-op. Guard against the fixture
+	// regressing to an initContainer with no rewritable path.
+	initContainers := d.Spec.Template.Spec.InitContainers
+	if len(initContainers) != 1 || initContainers[0].Name != "chown-container-data-dir" {
+		t.Fatalf("expected single chown initContainer, got %+v", initContainers)
+	}
+	var hasMonPath bool
+	for _, a := range initContainers[0].Args {
+		if strings.HasPrefix(a, "/var/lib/ceph/mon/ceph-") {
+			hasMonPath = true
+			break
+		}
+	}
+	if !hasMonPath {
+		t.Error("chown initContainer must carry a /var/lib/ceph/mon/ceph- path arg for the controller to rewrite")
+	}
+
 	vols := map[string]bool{}
 	for _, v := range d.Spec.Template.Spec.Volumes {
 		vols[v.Name] = true

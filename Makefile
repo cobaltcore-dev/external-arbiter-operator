@@ -100,9 +100,11 @@ test-envtest: env
 .PHONY: test-all
 test-all: test-unit test-envtest
 
-# test runs the full hermetic suite (unit + envtest) without mutating source
-# or cloning dependencies over the network. Use `pretty` separately for
-# formatting/generation.
+# test runs the full layered suite (unit + envtest). It does not mutate source
+# or run `pretty`. It does NOT clone Rook: the envtest suite loads CephCluster
+# CRDs from contrib/k8s/3rdparty/, which `make deps` populates (a one-time
+# network clone) — on a checkout without that directory, run `make deps` first.
+# `make env` still downloads the envtest kube binaries on a cache miss.
 .PHONY: test
 test: test-all
 
