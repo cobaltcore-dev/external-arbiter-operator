@@ -72,7 +72,10 @@ jobs:
       - name: build
         run: go build ./...
 
-  # envtest integration suite against a committed, pinned Rook CRD (no network).
+  # envtest integration suite against a committed, pinned Rook CRD. The Rook CRD
+  # and Kubernetes API objects are vendored, but `make test-envtest` still runs
+  # `setup-envtest use`, which downloads the kube-apiserver/etcd test binaries
+  # from a Google-hosted bucket on a cache miss — this job is not network-free.
   envtest:
     name: envtest integration
     runs-on: ubuntu-latest
@@ -102,6 +105,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.19.0
       - name: helm lint
         run: helm lint contrib/charts/external-arbiter-operator
       - name: helm template (rendering must succeed)
