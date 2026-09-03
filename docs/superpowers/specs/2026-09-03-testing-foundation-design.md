@@ -25,12 +25,17 @@ Current pain points, verified in-tree:
 
 **In scope now (verifiable on this machine, no Ceph):**
 
+> Status note (added post-implementation): #67, #66, and #68 shipped as PRs 1–3.
+> #76 is still planned (PR 4 in the rollout below) — it is listed here for design
+> completeness, not as delivered. The #66 row below has been reconciled with the
+> jobs that actually shipped in `.github/workflows/ci.yaml`.
+
 | Issue | Deliverable |
 |-------|-------------|
 | #67 | Hermetic test layering: `make test-unit` (no API server), `make test-envtest` (explicit assets), `make test` (both). Fixture builders replace the captured manifest. Randomized order, `-count`, `-race`, log capture on failure, leak/cleanup checks, bounded `Eventually`. |
-| #66 | `.github/workflows/ci.yaml` — SHA-pinned, least-privilege, concurrency-cancel, timeouts, artifact-on-failure. Jobs: gen-diff, fmt, vet, lint, unit, envtest, race, helm-lint, crd-validate, license (reuse), vuln (govulncheck), build. Documented required-check names. Split fast (PR) vs scheduled (nightly). |
+| #66 | `.github/workflows/ci.yaml` — SHA-pinned, least-privilege, concurrency-cancel, timeouts, artifact-on-failure. Shipped jobs: `generate` (gen/helm/imports diff), `verify` (fmt/vet/lint/unit-race-shuffle/build), `envtest`, `helm` (lint+template), `vuln` (govulncheck); REUSE runs from the separate `reuse.yaml`. Documented required-check names. Split fast (PR) vs scheduled (nightly). |
 | #68 | Lifecycle/error-path coverage against the real reconcilers + a traceability table mapping each reconcile transition and error branch to a test. Coverage thresholds for critical packages. |
-| #76 | Invariant catalogue + Go fuzz tests + property tests for the **pure, oracle-having** functions: mon-ID allocation, defaulting, validation, `Interval` round-trip, status-transition monotonicity. Mutation testing (`gremlins`) on critical packages with a documented, changed-code threshold. |
+| #76 *(planned — PR 4, not yet delivered)* | Invariant catalogue + Go fuzz tests + property tests for the **pure, oracle-having** functions: mon-ID allocation, defaulting, validation, `Interval` round-trip, status-transition monotonicity. Mutation testing (`gremlins`) on critical packages with a documented, changed-code threshold. |
 
 **Deferred to design+plan docs only (need real infra or org policy — cannot be verified here):**
 
