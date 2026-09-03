@@ -352,24 +352,32 @@ func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return ctrl.Result{RequeueAfter: s.remoteArbiter.Spec.CheckInterval.Duration}, nil
 }
 
-func (r *RemoteArbiterReconciler) reserveExternalArbiterID(ctx context.Context, s *RemoteArbiterReconcilationState) error {
-	prefix := s.remoteArbiter.Spec.MonIDPrefix
-	suffixFirstCode := byte(97)
-	suffixLastCode := byte(122)
-
-	externalID := s.remoteArbiter.Status.MonID
-	if externalID == "" {
-		for suffixCode := suffixFirstCode; suffixCode <= suffixLastCode; suffixCode++ {
-			potentialID := prefix + string([]byte{suffixCode})
-			if !slices.Contains(s.cephCluster.Spec.Mon.ExternalMonIDs, potentialID) {
-				externalID = potentialID
-				break
-			}
+// allocateMonID returns the first free external monitor ID of the form
+// prefix+suffix, where suffix is a single lowercase letter a–z not already in
+// taken. It returns an error if every suffix is occupied. This is the pure core
+// of monitor-ID reservation: quorum config corruption starts with a wrong ID,
+// so the collision (skip-to-next) and exhaustion (error) branches are the
+// safety-critical paths worth testing directly.
+func allocateMonID(prefix string, taken []string) (string, error) {
+	const suffixFirst, suffixLast = byte('a'), byte('z')
+	for suffixCode := suffixFirst; suffixCode <= suffixLast; suffixCode++ {
+		potentialID := prefix + string([]byte{suffixCode})
+		if !slices.Contains(taken, potentialID) {
+			return potentialID, nil
 		}
 	}
+	return "", fmt.Errorf("ids with prefix %s and suffixes from %s to %s are occupied",
+		prefix, string([]byte{suffixFirst}), string([]byte{suffixLast}))
+}
 
+func (r *RemoteArbiterReconciler) reserveExternalArbiterID(ctx context.Context, s *RemoteArbiterReconcilationState) error {
+	externalID := s.remoteArbiter.Status.MonID
 	if externalID == "" {
-		return fmt.Errorf("ids with prefix %s and suffixes from %s to %s are occupied", prefix, string([]byte{suffixFirstCode}), string([]byte{suffixLastCode}))
+		var err error
+		externalID, err = allocateMonID(s.remoteArbiter.Spec.MonIDPrefix, s.cephCluster.Spec.Mon.ExternalMonIDs)
+		if err != nil {
+			return err
+		}
 	}
 
 	if slices.Contains(s.cephCluster.Spec.Mon.ExternalMonIDs, externalID) {
@@ -568,23 +576,37 @@ func (r *RemoteArbiterReconciler) makeDeploymentSpec(s *RemoteArbiterReconcilati
 }
 
 func (r *RemoteArbiterReconciler) determinePublicAddress(s *RemoteArbiterReconcilationState) (string, error) {
-	if s.arbiterService == nil {
+	var nodeIP string
+	if s.remoteArbiter.Spec.Service != nil {
+		nodeIP = s.remoteArbiter.Spec.Service.NodeIP
+	}
+	return determinePublicAddressFor(s.arbiterService, nodeIP)
+}
+
+// determinePublicAddressFor resolves the monitor's public address from the
+// arbiter Service. It is the pure core of address selection: a nil Service
+// means the pod IP is substituted at runtime; otherwise the address depends on
+// the Service type, and the "not yet allocated" branches must return an error
+// (not an empty address) so the reconciler requeues instead of writing a bogus
+// address into the monmap. nodeIP is the operator-configured NodePort address.
+func determinePublicAddressFor(service *corev1.Service, nodeIP string) (string, error) {
+	if service == nil {
 		return "$(ROOK_POD_IP)", nil
 	}
 
-	switch s.arbiterService.Spec.Type {
+	switch service.Spec.Type {
 	case corev1.ServiceTypeClusterIP:
-		if s.arbiterService.Spec.ClusterIP == "" {
+		if service.Spec.ClusterIP == "" {
 			return "", errors.New("service cluster ip is not yet allocated")
 		}
-		return s.arbiterService.Spec.ClusterIP, nil
+		return service.Spec.ClusterIP, nil
 	case corev1.ServiceTypeNodePort:
-		return s.remoteArbiter.Spec.Service.NodeIP, nil
+		return nodeIP, nil
 	case corev1.ServiceTypeLoadBalancer:
-		if len(s.arbiterService.Status.LoadBalancer.Ingress) == 0 {
+		if len(service.Status.LoadBalancer.Ingress) == 0 {
 			return "", errors.New("service load balancer ip is not yet allocated")
 		}
-		for _, ingress := range s.arbiterService.Status.LoadBalancer.Ingress {
+		for _, ingress := range service.Status.LoadBalancer.Ingress {
 			parsedIP, err := netip.ParseAddr(ingress.IP)
 			if err != nil {
 				continue
@@ -596,7 +618,7 @@ func (r *RemoteArbiterReconciler) determinePublicAddress(s *RemoteArbiterReconci
 		}
 		return "", errors.New("load balancer ingress has no IPv4 address")
 	default:
-		return "", fmt.Errorf("unsupported service type %s", s.arbiterService.Spec.Type)
+		return "", fmt.Errorf("unsupported service type %s", service.Spec.Type)
 	}
 }
 
