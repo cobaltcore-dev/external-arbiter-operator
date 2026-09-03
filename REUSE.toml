@@ -23,3 +23,11 @@ path = [
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors"
 SPDX-License-Identifier = "Apache-2.0"
+
+# Vendored, unmodified Rook CRD manifest (deploy/examples/crds.yaml at tag
+# v1.18.6), committed so CI needs no network to run CRD/envtest checks.
+[[annotations]]
+path = ["contrib/k8s/3rdparty/rook.yaml"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "The Rook Authors"
+SPDX-License-Identifier = "Apache-2.0"
