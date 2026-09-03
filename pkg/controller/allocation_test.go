@@ -103,6 +103,7 @@ func TestDeterminePublicAddressFor(t *testing.T) {
 		{name: "clusterip allocated", service: svc(corev1.ServiceTypeClusterIP, "172.16.0.3"), want: "172.16.0.3"},
 		{name: "clusterip not yet allocated errors", service: svc(corev1.ServiceTypeClusterIP, ""), wantErr: true},
 		{name: "nodeport returns configured node ip", service: svc(corev1.ServiceTypeNodePort, ""), nodeIP: "192.168.1.10", want: "192.168.1.10"},
+		{name: "nodeport without node ip errors", service: svc(corev1.ServiceTypeNodePort, ""), nodeIP: "", wantErr: true},
 		{name: "loadbalancer ipv4", service: lbWithIPv4, want: "10.0.0.5"},
 		{name: "loadbalancer skips bad and ipv6 then takes ipv4", service: lbSkipsBadThenIPv4, want: "10.0.0.9"},
 		{name: "loadbalancer no ingress errors", service: svc(corev1.ServiceTypeLoadBalancer, ""), wantErr: true},

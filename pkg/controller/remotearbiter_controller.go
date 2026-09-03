@@ -601,6 +601,9 @@ func determinePublicAddressFor(service *corev1.Service, nodeIP string) (string, 
 		}
 		return service.Spec.ClusterIP, nil
 	case corev1.ServiceTypeNodePort:
+		if nodeIP == "" {
+			return "", errors.New("service node ip is not configured")
+		}
 		return nodeIP, nil
 	case corev1.ServiceTypeLoadBalancer:
 		if len(service.Status.LoadBalancer.Ingress) == 0 {
@@ -1024,6 +1027,14 @@ func (r *RemoteArbiterReconciler) createArbiterService(ctx context.Context, s *R
 			IPFamilyPolicy:        &ipPolicy,
 			SessionAffinity:       corev1.ServiceAffinityNone,
 		},
+	}
+
+	// The requested Service type must reach the created Service; otherwise it
+	// defaults to ClusterIP and determinePublicAddressFor picks the ClusterIP
+	// branch even for NodePort/LoadBalancer, silently baking an unroutable
+	// in-cluster address into the monitor's --public-addr and the monmap.
+	if s.remoteArbiter.Spec.Service != nil {
+		s.arbiterService.Spec.Type = s.remoteArbiter.Spec.Service.Type
 	}
 
 	if err := s.remoteClusterClient.Create(ctx, s.arbiterService); err != nil {
