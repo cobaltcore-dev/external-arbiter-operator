@@ -86,6 +86,11 @@ func MonitorDeployment(opts ...Option) *appsv1.Deployment {
 			"--public-addr=10.101.147.96",
 			"--setuser-match-path=/var/lib/ceph/mon/ceph-a/store.db",
 			"--public-bind-addr=$(ROOK_POD_IP)",
+			// The source mon carries these; the controller strips them and
+			// re-derives them for the arbiter. Include them so the envtest
+			// fixture exercises the strip path in modifyContainers.
+			"--mon-host=$(ROOK_CEPH_MON_HOST)",
+			"--mon-initial-members=$(ROOK_CEPH_MON_INITIAL_MEMBERS)",
 		},
 		Command: []string{"ceph-mon"},
 		Env: []corev1.EnvVar{
