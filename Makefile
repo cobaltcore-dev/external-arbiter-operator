@@ -132,6 +132,20 @@ test-cover: env
 .PHONY: test
 test: test-all
 
+# test-e2e-quorum brings up a throwaway k3d cluster with real Rook Ceph + the
+# operator, deploys an arbiter mon into a second namespace, then kills a source
+# mon and asserts quorum survives *because* the arbiter votes. This is the only
+# test that proves the live quorum-survival property (issues #70/#71) end to end.
+# It is NOT part of `make test`: it needs docker + k3d + helm, ~16GB RAM, ~12min.
+# ROOK_VERSION is stripped of the quotes the variable carries for the URL builder.
+.PHONY: test-e2e-quorum
+test-e2e-quorum:
+	ROOK_VERSION=$(patsubst "%",%,$(ROOK_VERSION)) bash test/e2e/quorum/run.sh
+
+.PHONY: test-e2e-quorum-teardown
+test-e2e-quorum-teardown:
+	bash test/e2e/quorum/99-teardown.sh
+
 .PHONY: clean
 clean:
 	rm -rf build/
