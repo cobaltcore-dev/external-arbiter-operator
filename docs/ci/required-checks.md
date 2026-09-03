@@ -21,7 +21,22 @@ the job `name:` values, which is what GitHub surfaces as the check name):
 | `envtest integration`                | Controller reconciliation against a real API server (envtest) using the pinned Rook CRD. |
 | `helm lint + template`               | Helm chart lints and renders; CRD templates stay valid.     |
 | `govulncheck`                        | No known vulnerabilities in dependencies or the toolchain.  |
-| `REUSE Compliance Check`             | License/copyright headers present (existing `reuse.yaml`).  |
+| `REUSE Compliance Check`             | License/copyright headers present (from the separate `reuse.yaml` workflow, not `ci.yaml`). |
+
+## What is pinned vs. what reaches the network
+
+CI is **reproducible** (versions are pinned), not fully **hermetic** (some jobs
+still fetch over the network on a cache miss). Concretely:
+
+- Pinned and network-free: the **Rook CRD** is vendored at
+  `contrib/k8s/3rdparty/rook.yaml` (Rook `v1.18.6`), so no job clones Rook. All
+  Go tooling is invoked through `go tool` (declared in `go.mod`) and resolved by
+  `actions/setup-go`; the Go version comes from `go.mod` (`go-version-file`) and
+  the Kubernetes/envtest version from the `Makefile` (`K8S_VERSION`).
+- Still reaches the network: the **envtest** job runs `setup-envtest use`, which
+  downloads the kube-apiserver/etcd binaries from a Google-hosted bucket on a
+  cache miss; **govulncheck** queries `vuln.go.dev` for the vulnerability
+  database. These are external dependencies, not repository state.
 
 ## Branch-protection settings
 
@@ -33,15 +48,6 @@ On `main`, enable:
 - **Require branches to be up to date before merging** — so checks run against the
   post-merge tree.
 - **Do not allow bypassing the above settings** — applies the rules to admins too.
-
-## Why these are hermetic
-
-- The **Rook CRD** is vendored at `contrib/k8s/3rdparty/rook.yaml` (pinned to Rook
-  `v1.18.6`), so no job clones Rook or reaches the network for it.
-- All Go tooling is invoked through `go tool` (declared in `go.mod`), resolved and
-  cached by `actions/setup-go`; no separate tool installs, no hidden version drift.
-- CI reads the Go version from `go.mod` (`go-version-file`) and the Kubernetes/envtest
-  version from the `Makefile` (`K8S_VERSION`), so the versions match the repository's.
 
 ## Performance target
 
