@@ -1,3 +1,5 @@
+//go:build envtest
+
 // Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
 // SPDX-License-Identifier: Apache-2.0
 
@@ -17,6 +19,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/cobaltcore-dev/external-arbiter-operator/pkg/api/arbiter/v1alpha1"
+	"github.com/cobaltcore-dev/external-arbiter-operator/test/builders"
 
 	rookv1 "github.com/rook/rook/pkg/apis/ceph.rook.io/v1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -24,7 +27,6 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -128,6 +130,17 @@ func namespaceCleanUp(k8sClient client.Client, clusterTypes []client.Object, nam
 func TestControllers(t *testing.T) {
 	RegisterFailHandler(Fail)
 
+	// NOTE(#67): RandomizeAllSpecs is intentionally NOT enabled here. Enabling
+	// it surfaces a pre-existing order dependence between the "should succeed"
+	// and "should fail to check if arbiter deployment ready" specs (the target
+	// arbiter Deployment carries a finalizer and is not guaranteed fully
+	// deleted by the AfterEach namespaceCleanUp before the next spec runs, so a
+	// randomized predecessor leaves state that trips a 30s Eventually).
+	// Fixing that requires finalizer-aware, deletion-waiting cleanup, which is
+	// out of scope for this test-layering change and must not touch reconcile
+	// behavior. Specs therefore run in declaration order; -shuffle=on still
+	// randomizes package-level ordering. Full spec randomization for this suite
+	// belongs to the follow-up that hardens cleanup.
 	RunSpecs(t, "Controller Suite")
 }
 
@@ -291,35 +304,10 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(sourceK8sClient).NotTo(BeNil())
 
-	monitorDeploymentBytes, err := os.ReadFile("../../contrib/k8s/test/mon-deployment.yaml")
-	Expect(err).NotTo(HaveOccurred())
-	monitorEnvVarSecretBytes, err := os.ReadFile("../../contrib/k8s/test/env-var-secret.yaml")
-	Expect(err).NotTo(HaveOccurred())
-	monitorKeyringSecretBytes, err := os.ReadFile("../../contrib/k8s/test/keyring-secret.yaml")
-	Expect(err).NotTo(HaveOccurred())
-	monitorOverrideConfigMapBytes, err := os.ReadFile("../../contrib/k8s/test/override-configmap.yaml")
-	Expect(err).NotTo(HaveOccurred())
-
-	resourceDeserializer := serializer.NewCodecFactory(scheme.Scheme).UniversalDeserializer()
-
-	monitorDeploymentObject, _, err := resourceDeserializer.Decode(monitorDeploymentBytes, nil, nil)
-	Expect(err).NotTo(HaveOccurred())
-	monitorEnvVarSecretObject, _, err := resourceDeserializer.Decode(monitorEnvVarSecretBytes, nil, nil)
-	Expect(err).NotTo(HaveOccurred())
-	monitorKeyringSecretObject, _, err := resourceDeserializer.Decode(monitorKeyringSecretBytes, nil, nil)
-	Expect(err).NotTo(HaveOccurred())
-	monitorOverrideConfigMapObject, _, err := resourceDeserializer.Decode(monitorOverrideConfigMapBytes, nil, nil)
-	Expect(err).NotTo(HaveOccurred())
-
-	var ok bool
-	refMonitorDeployment, ok = monitorDeploymentObject.(*appsv1.Deployment)
-	Expect(ok).To(BeTrue())
-	refMonitorEnvVarSecret, ok = monitorEnvVarSecretObject.(*corev1.Secret)
-	Expect(ok).To(BeTrue())
-	refMonitorKeyringSecret, ok = monitorKeyringSecretObject.(*corev1.Secret)
-	Expect(ok).To(BeTrue())
-	refMonitorOverrideConfigMap, ok = monitorOverrideConfigMapObject.(*corev1.ConfigMap)
-	Expect(ok).To(BeTrue())
+	refMonitorDeployment = builders.MonitorDeployment()
+	refMonitorEnvVarSecret = builders.MonitorEnvVarSecret()
+	refMonitorKeyringSecret = builders.MonitorKeyringSecret()
+	refMonitorOverrideConfigMap = builders.MonitorOverrideConfigMap()
 })
 
 var _ = AfterSuite(func() {
