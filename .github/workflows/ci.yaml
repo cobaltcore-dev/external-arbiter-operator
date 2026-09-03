@@ -1,0 +1,122 @@
+# Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
+# SPDX-License-Identifier: Apache-2.0
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same ref (a new push to a PR obsoletes the old).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: read-only by default; no job here writes to the repo.
+permissions:
+  contents: read
+
+jobs:
+  # generated-file consistency: `make gen` must be a no-op on a clean tree.
+  generate:
+    name: generated files up to date
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: run code generation
+        # gen emits controller-gen output (CRDs/RBAC/deepcopy); helm copies those
+        # CRDs into the chart and injects RBAC into manager-role.yaml; imports
+        # re-applies the repo's local import grouping that gen does not. The repo
+        # maintains all three together, so the consistency check runs all three
+        # before diffing. All steps are network-free (go tool + file copies).
+        run: |
+          make gen
+          make helm
+          make imports
+      - name: fail on uncommitted generated changes
+        run: |
+          if ! git diff --exit-code; then
+            echo "::error::Generated files are stale. Run 'make gen && make helm && make imports' and commit the result."
+            exit 1
+          fi
+
+  # Fast Go checks: format, vet, lint, unit tests (race + shuffle), build.
+  verify:
+    name: fmt / vet / lint / unit / build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gofmt (no diffs allowed)
+        run: |
+          diff=$(gofmt -l cmd pkg test)
+          if [ -n "$diff" ]; then
+            echo "::error::gofmt needed on:"; echo "$diff"; exit 1
+          fi
+      - name: go vet
+        run: make vet
+      - name: golangci-lint
+        run: make lint
+      - name: unit tests (race, shuffle)
+        run: make test-unit
+      - name: build
+        run: go build ./...
+
+  # envtest integration suite against a committed, pinned Rook CRD (no network).
+  envtest:
+    name: envtest integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: run envtest suites
+        run: make test-envtest
+      - name: upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: envtest-logs
+          path: |
+            **/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Helm chart renders and lints; CRDs stay valid Kubernetes API objects.
+  helm:
+    name: helm lint + template
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: helm lint
+        run: helm lint contrib/charts/external-arbiter-operator
+      - name: helm template (rendering must succeed)
+        run: helm template contrib/charts/external-arbiter-operator >/dev/null
+
+  # Dependency/toolchain vulnerability scan.
+  vuln:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: govulncheck
+        run: make vuln
