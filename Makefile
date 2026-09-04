@@ -77,9 +77,36 @@ deps:
 	mkdir -p contrib/k8s/3rdparty
 	cp -r rook/deploy/examples/crds.yaml contrib/k8s/3rdparty/rook.yaml
 
+.PHONY: test-unit
+test-unit:
+	go test -race -shuffle=on -count=1 ./pkg/webhook/... ./test/...
+
+# test-unit-repeat re-runs the unit suites REPEAT (default 20) times, each with a
+# fresh shuffle/Ginkgo seed, to expose order dependence and flakes (#67). Ginkgo
+# rejects `go test -count>1`, so the suite is looped instead.
+REPEAT ?= 20
+.PHONY: test-unit-repeat
+test-unit-repeat:
+	@for i in $$(seq 1 $(REPEAT)); do \
+		echo "=== unit run $$i/$(REPEAT) ==="; \
+		go test -race -shuffle=on -count=1 ./pkg/webhook/... ./test/... || exit 1; \
+	done
+
+.PHONY: test-envtest
+test-envtest: env
+	KUBEBUILDER_ASSETS="$(abspath $(shell go tool setup-envtest use $(K8S_VERSION) --bin-dir ./.env -p path))" \
+		go test -tags envtest -shuffle=on -count=1 ./pkg/controller/...
+
+.PHONY: test-all
+test-all: test-unit test-envtest
+
+# test runs the full layered suite (unit + envtest). It does not mutate source
+# or run `pretty`. It does NOT clone Rook: the envtest suite loads CephCluster
+# CRDs from contrib/k8s/3rdparty/, which `make deps` populates (a one-time
+# network clone) — on a checkout without that directory, run `make deps` first.
+# `make env` still downloads the envtest kube binaries on a cache miss.
 .PHONY: test
-test: pretty env deps
-	go test ./...
+test: test-all
 
 .PHONY: clean
 clean:
