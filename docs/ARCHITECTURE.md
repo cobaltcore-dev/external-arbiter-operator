@@ -77,41 +77,46 @@
 │  │  ┌──────────────────────────────────────────────────────────────┐  │ │
 │  │  │              Arbiter Deployment (Pod)                        │  │ │
 │  │  │  ┌────────────────────────────────────────────────────────┐  │  │ │
-│  │  │  │  Container: Ceph Monitor (ext-c)                       │  │  │ │
+│  │  │  │  Container: Ceph Monitor (ext-a)                       │  │  │ │
+│  │  │  │  (DeepCopy of source Rook mon Deployment, patched)     │  │  │ │
 │  │  │  │  ┌──────────────────────────────────────────────────┐  │  │  │ │
-│  │  │  │  │  Command: ceph-mon                                │  │  │  │ │
+│  │  │  │  │  Command/args: inherited from source Rook mon     │  │  │  │ │
 │  │  │  │  │  - Joins Ceph quorum                              │  │  │  │ │
 │  │  │  │  │  - Participates in consensus                      │  │  │  │ │
-│  │  │  │  │  - No data storage (arbiter mode)                 │  │  │  │ │
+│  │  │  │  │  - Local mon store at /var/lib/rook/mon-ext-a/data│  │  │  │ │
 │  │  │  │  └──────────────────────────────────────────────────┘  │  │  │ │
 │  │  │  │                                                         │  │  │ │
-│  │  │  │  Volumes:                                               │  │  │ │
-│  │  │  │  - keyring-secret (from Secret)                         │  │  │ │
-│  │  │  │  - override-configmap (from ConfigMap)                  │  │  │ │
-│  │  │  │  - envvar-secret (from Secret)                          │  │  │ │
-│  │  │  │  - arbiter-monmap (emptyDir)                            │  │  │ │
+│  │  │  │  Volumes (patched from source mon):                     │  │  │ │
+│  │  │  │  - rook-ceph-mons-keyring (→ keyring Secret)            │  │  │ │
+│  │  │  │  - rook-config-override (→ override ConfigMap)          │  │  │ │
+│  │  │  │  - ceph-daemon-data (hostPath mon-ext-a/data)           │  │  │ │
+│  │  │  │  - monmap (emptyDir; built by monmap init container)    │  │  │ │
 │  │  │  └─────────────────────────────────────────────────────────┘  │  │ │
 │  │  └──────────────────────────────────────────────────────────────┘  │ │
 │  │                                    │                                │ │
 │  │  ┌─────────────────────────────────▼────────────────────────────┐  │ │
-│  │  │              Service (arbiter-service)                        │  │ │
+│  │  │              Service (arbiter-service-<random>)                 │  │ │
 │  │  │  Type: ClusterIP / NodePort / LoadBalancer                   │  │ │
-│  │  │  Port: 3300 (Ceph mon port)                                  │  │ │
-│  │  │  Selector: role=arbiter, lookup=external-arbiter             │  │ │
+│  │  │  (created only when spec.service is set; else uses POD_IP)   │  │ │
+│  │  │  Ports: 6789 (tcp-msgr1 v1), 3300 (tcp-msgr2 v2)             │  │ │
+│  │  │  Selector: ceph.cobaltcore.sap.com/lookup=<arbiter name>     │  │ │
 │  │  └──────────────────────────────────────────────────────────────┘  │ │
 │  │                                                                     │ │
 │  │  ┌──────────────────────────────────────────────────────────────┐  │ │
-│  │  │         Secret: arbiter-keyring                              │  │ │
+│  │  │         Secret: arbiter-keyring-secret-<random>              │  │ │
+│  │  │  (role=keyring label; Data copied verbatim from source)      │  │ │
 │  │  │  - keyring (Ceph authentication key)                         │  │ │
 │  │  └──────────────────────────────────────────────────────────────┘  │ │
 │  │                                                                     │ │
 │  │  ┌──────────────────────────────────────────────────────────────┐  │ │
-│  │  │         ConfigMap: arbiter-override                          │  │ │
+│  │  │         ConfigMap: arbiter-override-configmap-<random>       │  │ │
+│  │  │  (lookup label only; Data copied verbatim from source)       │  │ │
 │  │  │  - ceph.conf (Ceph configuration)                            │  │ │
 │  │  └──────────────────────────────────────────────────────────────┘  │ │
 │  │                                                                     │ │
 │  │  ┌──────────────────────────────────────────────────────────────┐  │ │
-│  │  │         Secret: arbiter-envvar                               │  │ │
+│  │  │         Secret: arbiter-env-var-secret-<random>              │  │ │
+│  │  │  (role=envvar label; Data copied verbatim from source)       │  │ │
 │  │  │  - ROOK_CEPH_MON_HOST                                        │  │ │
 │  │  │  - ROOK_CEPH_MON_INITIAL_MEMBERS                             │  │ │
 │  │  └──────────────────────────────────────────────────────────────┘  │ │
@@ -125,16 +130,16 @@
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
                                    │
-                                   │ Ceph Protocol (3300)
+                                   │ Ceph Protocol (6789/3300)
                                    │ Monitor Communication
                                    ▼
          ┌─────────────────────────────────────────────┐
          │         Ceph Quorum (Consensus)             │
          │  ┌────────┐  ┌────────┐  ┌────────┐         │
-         │  │ Mon-A  │  │ Mon-B  │  │ Mon-C  │         │
-         │  │(Src)   │  │(Src)   │  │(Remote)│         │
+         │  │ mon-a  │  │ mon-b  │  │ ext-a  │         │
+         │  │(Src)   │  │(Src)   │  │(Arbtr) │         │
          │  └────────┘  └────────┘  └────────┘         │
-         │             Arbiter Mode                     │
+         │        Arbiter is a voting member            │
          └─────────────────────────────────────────────┘
 ```
 
@@ -291,20 +296,25 @@
                                          │
                                          ▼
                                ┌────────────────────┐
-                               │ 9. Read Ceph Config│
-                               │    from source:    │
-                               │    - mon secrets   │
-                               │    - mon configmap │
-                               │    - mon deployment│
+                               │ 9. Generate MonID  │
+                               │    (ext-a, ext-b)  │
+                               │    from ExternalMon│
+                               │    IDs (first free)│
                                └─────────┬──────────┘
-                                         │
-                     Condition: CephClusterConfigured
                                          │
                                          ▼
                                ┌────────────────────┐
-                               │ 10. Generate MonID │
-                               │     (ext-c, ext-d) │
+                               │ 10. Read Ceph      │
+                               │     Config from    │
+                               │     source:        │
+                               │     - mon secrets  │
+                               │     - mon configmap│
+                               │     - mon deploymnt│
                                └─────────┬──────────┘
+                                         │
+                     Condition: CephClusterConfigured,
+                                MonitorDeploymentExists,
+                                MonitorDeploymentReady
                                          │
                                          ▼
                                ┌────────────────────┐
@@ -332,6 +342,8 @@
                                ┌────────────────────┐
                                │ 14. Create/Update  │
                                │     Arbiter Service│
+                               │  (only if spec.    │
+                               │   service is set)  │
                                └─────────┬──────────┘
                                          │
                                          ▼
@@ -355,7 +367,7 @@
                                ┌────────────────────┐
                                │ 17. Update Status  │
                                │     State: Ready   │
-                               │     MonID: ext-c   │
+                               │     MonID: ext-a   │
                                └─────────┬──────────┘
                                          │
                                          ▼
@@ -449,7 +461,7 @@
     │      Update        │                  │                 │                │
     │◄───────────────────┤◄─────Watch──────┤                 │                │
     │  State: Ready      │                  │                 │                │
-    │  MonID: ext-c      │                  │                 │                │
+    │  MonID: ext-a      │                  │                 │                │
     │                    │                  │                 │                │
 ```
 
@@ -499,41 +511,52 @@ SOURCE CLUSTER                                          REMOTE CLUSTER
                     │  Operator Transform  │                 │
                     │                      │                 │
                     │  1. Generate MonID   │                 │
-                    │  2. Extract keyring  │                 │
-                    │  3. Update ceph.conf │                 │
-                    │  4. Set mon endpoints│                 │
-                    │  5. Configure service│                 │
+                    │  2. Copy keyring     │                 │
+                    │     Secret verbatim  │                 │
+                    │  3. Copy override CM │                 │
+                    │     verbatim         │                 │
+                    │  4. Copy envvar      │                 │
+                    │     Secret verbatim  │                 │
+                    │  5. DeepCopy source  │                 │
+                    │     mon Deployment,  │                 │
+                    │     add monmap init  │                 │
+                    │     container        │                 │
                     └──────────┬───────────┘                 │
                                │                             │
                                │  Creates Resources          │
+                               │  (all GenerateName;          │
+                               │   found by lookup label)     │
                                │                             │
                                ▼                             ▼
                                            ┌─────────────────────────┐
                                            │ Arbiter Secret          │
-                                           │ - arbiter-keyring       │
-                                           │   (from source)         │
+                                           │ arbiter-keyring-secret-  │
+                                           │   (Data from source)     │
                                            └─────────────────────────┘
                                                        │
                                            ┌───────────▼─────────────┐
                                            │ Arbiter ConfigMap       │
-                                           │ - ceph.conf             │
-                                           │   (modified with monID) │
+                                           │ arbiter-override-        │
+                                           │   configmap-<random>     │
+                                           │   (Data from source)     │
                                            └─────────────────────────┘
                                                        │
                                            ┌───────────▼─────────────┐
                                            │ Arbiter EnvVar Secret   │
-                                           │ - ROOK_CEPH_MON_HOST    │
-                                           │ - ROOK_CEPH_MON_INITIAL_│
-                                           │   MEMBERS               │
+                                           │ arbiter-env-var-secret-  │
+                                           │   (Data from source)     │
                                            └─────────────────────────┘
                                                        │
                                            ┌───────────▼─────────────┐
                                            │ Arbiter Deployment      │
+                                           │ arbiter-deployment-      │
                                            │                         │
-                                           │ Mounts:                 │
-                                           │ - keyring → /etc/ceph   │
-                                           │ - config → /etc/ceph    │
-                                           │ - envvar → container env│
+                                           │ Volumes (patched from    │
+                                           │ source mon by name):     │
+                                           │ - rook-ceph-mons-keyring │
+                                           │ - rook-config-override   │
+                                           │ - ceph-daemon-data       │
+                                           │ - monmap (emptyDir)      │
                                            └─────────────────────────┘
 ```
 
@@ -546,7 +569,7 @@ SOURCE CLUSTER                                          REMOTE CLUSTER
 
 SOURCE CLUSTER (Operator Namespace)
 ┌───────────────────────────────────────────────────────────────┐
-│ Service Account: external-arbiter-operator                    │
+│ Service Account: <release>-controller-manager                 │
 │                                                               │
 │ Cluster-level permissions:                                    │
 │ - cephclusters.ceph.rook.io (get, list, watch)              │

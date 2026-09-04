@@ -100,7 +100,7 @@ SOURCE CLUSTER (Cluster A)
 │  │   - RemoteArbiter                                          │ │
 │  │                                                             │ │
 │  │ ✓ ServiceAccount                                            │ │
-│  │   - manager-sa                                             │ │
+│  │   - <release>-controller-manager                          │ │
 │  │                                                             │ │
 │  │ ✓ ClusterRole & ClusterRoleBinding                         │ │
 │  │   - Access to CephCluster resources                        │ │
@@ -425,18 +425,16 @@ SOURCE CLUSTER
 ┌───────────────────────────────────────────────────────────────────┐
 │ Step 9: Generate Monitor ID                                       │
 │ ├─ Prefix: "ext-"                                                │
-│ ├─ Existing monitors: [a, b]                                     │
-│ ├─ Generate: ext-c                                               │
-│ └─ MonID = "ext-c"                                               │
+│ ├─ Existing external mon IDs: (none yet)                         │
+│ ├─ Allocate next free suffix from ExternalMonIDs domain          │
+│ └─ MonID = "ext-a"                                               │
 │                                                                   │
-│ Step 10: Transform Configuration                                  │
-│ ├─ Update ceph.conf:                                             │
-│ │  ├─ mon_initial_members = a,b,ext-c                            │
-│ │  └─ mon_host = 10.0.1.10:3300,10.0.1.11:3300,                │
-│ │                arbiter-service.external-arbiter:3300           │
-│ │                                                                │
-│ ├─ Create keyring for ext-c                                      │
-│ └─ Prepare environment variables                                 │
+│ Step 10: Build Arbiter Resources (copy source verbatim)          │
+│ ├─ Keyring Secret: copied verbatim from source mon secret        │
+│ ├─ Override ConfigMap: copied verbatim from rook-config-override │
+│ ├─ EnvVar Secret: copied verbatim from source mon env            │
+│ └─ Deployment: DeepCopy of the source Rook mon Deployment,       │
+│      patched (volumes + monmap init container + arg rewrites)     │
 └───────────────────────────────────────────────────────────────────┘
         │
         │ Deploy to Remote Cluster
@@ -459,12 +457,12 @@ SOURCE CLUSTER → REMOTE CLUSTER
 │ apiVersion: v1                                                    │
 │ kind: Secret                                                      │
 │ metadata:                                                         │
-│   name: external-arbiter-keyring                                 │
+│   generateName: arbiter-keyring-secret-                          │
 │   namespace: external-arbiter                                    │
 │   labels:                                                         │
-│     ceph.cobaltcore.sap.com/lookup: external-arbiter            │
+│     ceph.cobaltcore.sap.com/lookup: <arbiter name>              │
 │     ceph.cobaltcore.sap.com/role: keyring                        │
-│ data:                                                             │
+│ data:  # copied verbatim from source mon keyring secret          │
 │   keyring: <base64-encoded-ceph-keyring>                         │
 │   fsid: <base64-encoded-fsid>                                    │
 │                                                                   │
@@ -480,19 +478,14 @@ SOURCE CLUSTER → REMOTE CLUSTER
 │ apiVersion: v1                                                    │
 │ kind: ConfigMap                                                   │
 │ metadata:                                                         │
-│   name: external-arbiter-override                                │
+│   generateName: arbiter-override-configmap-                      │
 │   namespace: external-arbiter                                    │
 │   labels:                                                         │
-│     ceph.cobaltcore.sap.com/lookup: external-arbiter            │
-│ data:                                                             │
-│   ceph.conf: |                                                    │
+│     ceph.cobaltcore.sap.com/lookup: <arbiter name>              │
+│ data:  # copied verbatim from source rook-config-override        │
+│   config: |                                                      │
 │     [global]                                                      │
-│     fsid = xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx                  │
-│     mon_host = 10.0.1.10:3300,10.0.1.11:3300,...                │
-│     mon_initial_members = a,b,ext-c                               │
-│     [mon]                                                         │
-│     mon_data_avail_warn = 10                                      │
-│     ...                                                           │
+│     ... (source ceph.conf overrides, unchanged)                  │
 │                                                                   │
 │ ✓ ConfigMap created on remote cluster                            │
 └───────────────────────────────────────────────────────────────────┘
@@ -506,106 +499,91 @@ SOURCE CLUSTER → REMOTE CLUSTER
 │ apiVersion: v1                                                    │
 │ kind: Secret                                                      │
 │ metadata:                                                         │
-│   name: external-arbiter-envvar                                  │
+│   generateName: arbiter-env-var-secret-                          │
 │   namespace: external-arbiter                                    │
 │   labels:                                                         │
+│     ceph.cobaltcore.sap.com/lookup: <arbiter name>              │
 │     ceph.cobaltcore.sap.com/role: envvar                         │
-│ stringData:                                                       │
-│   ROOK_CEPH_MON_HOST: 10.0.1.10:3300,10.0.1.11:3300            │
-│   ROOK_CEPH_MON_INITIAL_MEMBERS: a,b,ext-c                       │
-│   ROOK_CEPH_CLUSTER_FSID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxx        │
+│ data:  # copied verbatim from source mon env-var secret          │
+│   ROOK_CEPH_MON_HOST: <source value>                             │
+│   ROOK_CEPH_MON_INITIAL_MEMBERS: <source value>                  │
+│   ROOK_CEPH_CLUSTER_FSID: <source value>                         │
 │                                                                   │
 │ ✓ Secret created on remote cluster                               │
 └───────────────────────────────────────────────────────────────────┘
         │
         ▼
 ┌───────────────────────────────────────────────────────────────────┐
-│ Step 14: Create Arbiter Service                                   │
+│ Step 14: Create Arbiter Service (only if spec.service is set)     │
 │                                                                   │
 │ kubectl apply (via remote client)                                 │
 │                                                                   │
 │ apiVersion: v1                                                    │
 │ kind: Service                                                     │
 │ metadata:                                                         │
-│   name: external-arbiter-service                                 │
+│   generateName: arbiter-service-                                 │
 │   namespace: external-arbiter                                    │
 │ spec:                                                             │
 │   type: ClusterIP                                                │
 │   ports:                                                          │
-│   - name: mon                                                     │
+│   - name: tcp-msgr1                                              │
+│     port: 6789                                                    │
+│     targetPort: 6789                                             │
+│     protocol: TCP                                                │
+│   - name: tcp-msgr2                                              │
 │     port: 3300                                                    │
 │     targetPort: 3300                                             │
 │     protocol: TCP                                                │
 │   selector:                                                       │
-│     ceph.cobaltcore.sap.com/lookup: external-arbiter            │
-│     ceph.cobaltcore.sap.com/role: arbiter                        │
+│     ceph.cobaltcore.sap.com/lookup: <arbiter name>              │
 │                                                                   │
 │ ✓ Service created on remote cluster                              │
 │ ├─ ClusterIP: 10.96.100.50 (assigned by K8s)                    │
-│ └─ DNS: external-arbiter-service.external-arbiter.svc           │
+│ └─ DNS: arbiter-service-<random>.external-arbiter.svc           │
 └───────────────────────────────────────────────────────────────────┘
         │
         ▼
 ┌───────────────────────────────────────────────────────────────────┐
 │ Step 15: Create Arbiter Deployment                                │
 │                                                                   │
+│ Built by DeepCopy of the SOURCE Rook mon Deployment, then         │
+│ patched — NOT authored from scratch. The arbiter joins the        │
+│ source cluster's EXISTING Paxos quorum (same fsid, keyring,       │
+│ monmap), so command/args are inherited from the source mon.       │
+│                                                                   │
 │ kubectl apply (via remote client)                                 │
 │                                                                   │
 │ apiVersion: apps/v1                                              │
 │ kind: Deployment                                                  │
 │ metadata:                                                         │
-│   name: external-arbiter                                         │
+│   generateName: arbiter-                                         │
 │   namespace: external-arbiter                                    │
 │   labels:                                                         │
-│     ceph.cobaltcore.sap.com/lookup: external-arbiter            │
+│     ceph.cobaltcore.sap.com/lookup: <arbiter name>              │
 │ spec:                                                             │
 │   replicas: 1                                                    │
 │   selector:                                                       │
 │     matchLabels:                                                  │
-│       ceph.cobaltcore.sap.com/lookup: external-arbiter          │
-│       ceph.cobaltcore.sap.com/role: arbiter                      │
+│       ceph.cobaltcore.sap.com/lookup: <arbiter name>            │
 │   template:                                                       │
-│     metadata:                                                     │
-│       labels:                                                     │
-│         ceph.cobaltcore.sap.com/lookup: external-arbiter        │
-│         ceph.cobaltcore.sap.com/role: arbiter                    │
 │     spec:                                                         │
+│       # --- patched onto the DeepCopied source mon pod spec ---  │
+│       initContainers:                                            │
+│       - name: init-monmap   # monmaptool builds the join monmap  │
+│         image: <source mon image>                               │
 │       containers:                                                 │
-│       - name: mon                                                │
-│         image: quay.io/ceph/ceph:v17.2.7                        │
-│         command: ["ceph-mon"]                                    │
-│         args:                                                     │
-│           - "--fsid=$(ROOK_CEPH_CLUSTER_FSID)"                  │
-│           - "--id=ext-c"                                         │
-│           - "--mon-data=/var/lib/ceph/mon/ceph-ext-c"           │
-│           - "--keyring=/etc/ceph/keyring"                       │
-│           - "--public-addr=0.0.0.0:3300"                        │
-│           - "--setuser=ceph"                                     │
-│           - "--setgroup=ceph"                                    │
+│       - name: mon           # inherited from source mon          │
+│         image: <source mon image>                               │
+│         # command/args inherited from source; --id patched to    │
+│         # the allocated mon id (ext-a)                           │
 │         ports:                                                    │
-│         - containerPort: 3300                                    │
-│         envFrom:                                                  │
-│         - secretRef:                                             │
-│             name: external-arbiter-envvar                        │
-│         volumeMounts:                                             │
-│         - name: keyring                                          │
-│           mountPath: /etc/ceph                                   │
-│           readOnly: true                                         │
-│         - name: config                                           │
-│           mountPath: /etc/ceph/ceph.conf                        │
-│           subPath: ceph.conf                                     │
-│           readOnly: true                                         │
-│         - name: monmap                                           │
-│           mountPath: /tmp/monmap                                 │
+│         - containerPort: 6789   # msgr v1                        │
+│         - containerPort: 3300   # msgr v2                        │
 │       volumes:                                                    │
-│       - name: keyring                                            │
-│         secret:                                                   │
-│           secretName: external-arbiter-keyring                   │
-│       - name: config                                             │
-│         configMap:                                                │
-│           name: external-arbiter-override                        │
-│       - name: monmap                                             │
-│         emptyDir: {}                                             │
+│       - name: rook-ceph-mons-keyring   # -> keyring Secret       │
+│       - name: rook-config-override     # -> override ConfigMap   │
+│       - name: ceph-daemon-data         # hostPath, local store   │
+│       - name: monmap                   # emptyDir; built by init │
 │                                                                   │
 │ ✓ Deployment created on remote cluster                           │
 └───────────────────────────────────────────────────────────────────┘
@@ -620,7 +598,7 @@ SOURCE CLUSTER
 │ ├─ Condition: ArbiterDeploymentExists = True                     │
 │ ├─ State: Progressing                                            │
 │ ├─ Message: "Arbiter deployment created, waiting for ready"      │
-│ └─ MonID: ext-c                                                  │
+│ └─ MonID: ext-a                                                  │
 └───────────────────────────────────────────────────────────────────┘
 
 
@@ -654,25 +632,25 @@ REMOTE CLUSTER
 │ │ 2026-03-04 10:00:01.100 INFO  reading config from            │ │
 │ │                               /etc/ceph/ceph.conf             │ │
 │ │ 2026-03-04 10:00:01.200 INFO  fsid xxxxxxxx-xxxx-xxxx-xxxx   │ │
-│ │ 2026-03-04 10:00:01.300 INFO  mon.ext-c using public_addr    │ │
-│ │                               0.0.0.0:3300                    │ │
+│ │ 2026-03-04 10:00:01.300 INFO  mon.ext-a using public_addr    │ │
+│ │                               (POD_IP or Service ClusterIP)   │ │
 │ │ 2026-03-04 10:00:01.400 INFO  reading keyring from           │ │
-│ │                               /etc/ceph/keyring               │ │
-│ │ 2026-03-04 10:00:01.500 INFO  initial quorum includes        │ │
-│ │                               [a, b, ext-c]                   │ │
+│ │                               (mounted keyring volume)        │ │
+│ │ 2026-03-04 10:00:01.500 INFO  building monmap from source    │ │
+│ │                               mon_host                        │ │
 │ │ 2026-03-04 10:00:02.000 INFO  probing peer mon.a at           │ │
 │ │                               10.0.1.10:3300                  │ │
 │ │ 2026-03-04 10:00:02.100 INFO  connected to mon.a              │ │
 │ │ 2026-03-04 10:00:02.200 INFO  probing peer mon.b at           │ │
 │ │                               10.0.1.11:3300                  │ │
 │ │ 2026-03-04 10:00:02.300 INFO  connected to mon.b              │ │
-│ │ 2026-03-04 10:00:03.000 INFO  mon.ext-c calling new election │ │
-│ │ 2026-03-04 10:00:03.500 INFO  mon.ext-c@2 won leader election│ │
-│ │                               with quorum 0,1,2               │ │
-│ │ 2026-03-04 10:00:03.600 INFO  monmap epoch 3 contains        │ │
-│ │                               3 mons: a, b, ext-c            │ │
-│ │ 2026-03-04 10:00:03.700 INFO  mon.ext-c joined quorum        │ │
-│ │ 2026-03-04 10:00:04.000 INFO  mon.ext-c is ready             │ │
+│ │ 2026-03-04 10:00:03.000 INFO  mon.ext-a calling new election │ │
+│ │ 2026-03-04 10:00:03.500 INFO  mon.ext-a joined existing      │ │
+│ │                               quorum (Paxos)                  │ │
+│ │ 2026-03-04 10:00:03.600 INFO  monmap epoch N contains        │ │
+│ │                               3 mons: a, b, ext-a            │ │
+│ │ 2026-03-04 10:00:03.700 INFO  mon.ext-a in quorum            │ │
+│ │ 2026-03-04 10:00:04.000 INFO  mon.ext-a is ready             │ │
 │ └─────────────────────────────────────────────────────────────┘ │
 └───────────────────────────────────────────────────────────────────┘
         │
@@ -696,11 +674,11 @@ REMOTE CLUSTER
 │ │─────────┼────────────────┼────────────────────┼────────────│ │
 │ │ a       │  rook-mon-a    │  10.0.1.10:3300    │  ✓ Online  │ │
 │ │ b       │  rook-mon-b    │  10.0.1.11:3300    │  ✓ Online  │ │
-│ │ ext-c   │  arbiter-pod   │  10.96.100.50:3300 │  ✓ Online  │ │
+│ │ ext-a   │  arbiter-pod   │  10.96.100.50:3300 │  ✓ Online  │ │
 │ └─────────────────────────────────────────────────────────────┘ │
 │                                                                   │
 │ Cluster Health: HEALTH_OK                                         │
-│ Quorum Status: 3 monitors in quorum (a, b, ext-c)               │
+│ Quorum Status: 3 monitors in quorum (a, b, ext-a)               │
 └───────────────────────────────────────────────────────────────────┘
 
 
@@ -732,7 +710,7 @@ SOURCE CLUSTER
 │ Update RemoteArbiter Status                                       │
 │ ├─ State: Ready                                                  │
 │ ├─ Message: "Remote arbiter is ready and joined quorum"         │
-│ ├─ MonID: ext-c                                                  │
+│ ├─ MonID: ext-a                                                  │
 │ └─ All conditions: True                                           │
 └───────────────────────────────────────────────────────────────────┘
         │
@@ -741,7 +719,7 @@ SOURCE CLUSTER
 │ kubectl get remotearbiter external-arbiter -o wide                │
 │                                                                   │
 │ NAME               MON ID  STATE   MESSAGE                        │
-│ external-arbiter   ext-c   Ready   Remote arbiter is ready...    │
+│ external-arbiter   ext-a   Ready   Remote arbiter is ready...    │
 └───────────────────────────────────────────────────────────────────┘
         │
         │ Schedule periodic health check
@@ -810,7 +788,7 @@ Final State:
 ✓ RemoteCluster validated and ready
 ✓ RemoteArbiter deployed and ready
 ✓ Arbiter pod running on remote cluster
-✓ Ceph monitor joined quorum as ext-c
+✓ Ceph monitor joined quorum as ext-a
 ✓ Continuous health monitoring active
 ✓ Geographic redundancy achieved
 
