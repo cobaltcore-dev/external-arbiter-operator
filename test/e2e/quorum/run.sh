@@ -20,6 +20,7 @@ trap cleanup EXIT
 
 bash "${HERE}/00-k3d-up.sh"
 bash "${HERE}/10-rook-install.sh"
+bash "${HERE}/15-osd-loopdev.sh"
 bash "${HERE}/20-cephcluster.sh"
 bash "${HERE}/30-operator-deploy.sh"
 bash "${HERE}/40-remote-kubeconfig.sh"

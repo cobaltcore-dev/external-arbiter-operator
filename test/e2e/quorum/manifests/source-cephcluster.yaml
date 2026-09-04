@@ -1,8 +1,12 @@
 # CephCluster for the quorum-survival e2e harness.
 # mon.count: 3 → with the arbiter mon that is 4 mons total. Killing one source
 # mon leaves 3/4 = majority, so quorum survives *because* the arbiter votes.
-# OSDs are backed by loopback Block PVCs on k3d's local-path StorageClass — no
-# real disk needed. See docs/superpowers/specs/2026-09-03-quorum-survival-harness-design.md
+#
+# OSDs consume the raw loop device that 15-osd-loopdev.sh attaches to each node
+# (useAllNodes + useAllDevices). k3d's local-path StorageClass does NOT support
+# volumeMode: Block, so a storageClassDeviceSets PVC-backed OSD cannot provision
+# there — a real (loop-backed) block device is the working no-real-disk path.
+# See docs/superpowers/specs/2026-09-03-quorum-survival-harness-design.md
 apiVersion: ceph.rook.io/v1
 kind: CephCluster
 metadata:
@@ -10,7 +14,7 @@ metadata:
   namespace: rook-ceph
 spec:
   cephVersion:
-    image: quay.io/ceph/ceph:v18   # reef, pairs with Rook 1.18
+    image: quay.io/ceph/ceph:v19   # squid, matches the v1.18.6 toolbox CLI
   dataDirHostPath: /var/lib/rook
   mon:
     count: 3
@@ -22,21 +26,8 @@ spec:
   crashCollector:
     disable: true
   storage:
-    storageClassDeviceSets:
-      - name: set1
-        count: 2
-        portable: false
-        volumeClaimTemplates:
-          - metadata:
-              name: data
-            spec:
-              resources:
-                requests:
-                  storage: 5Gi
-              storageClassName: local-path
-              volumeMode: Block
-              accessModes:
-                - ReadWriteOnce
+    useAllNodes: true
+    useAllDevices: true    # consumes the loop device from 15-osd-loopdev.sh
   resources:
     mon:
       requests: { cpu: "100m", memory: "512Mi" }

@@ -81,10 +81,13 @@ k3d cluster create arbiter-e2e \
 
 ### OSD without a real disk
 
-Use a PVC-backed OSD on k3d's built-in `local-path` StorageClass with
-`volumeMode: Block` — a loopback/host-dir-backed block device inside the node
-container. Rook 1.18 `storageClassDeviceSets` supports this; no raw disk needed.
-One OSD reaches `HEALTH_OK`; two avoids a degraded-PG warning.
+k3d nodes have no spare disk, and k3d's built-in `local-path` StorageClass does
+**not** support `volumeMode: Block` (its provisioner only `mkdir`s a directory),
+so a `storageClassDeviceSets` PVC-backed OSD cannot provision there. Instead a
+privileged DaemonSet (`manifests/osd-loopdev-daemonset.yaml`, applied by
+`15-osd-loopdev.sh`) creates an 8 Gi sparse file on each node and `losetup`s it
+to a raw loop device, which Rook consumes via `storage.useAllNodes: true` +
+`useAllDevices: true`. One OSD per node reaches `HEALTH_OK`.
 
 ## Rook install
 
@@ -145,9 +148,12 @@ tie-breaker story poorly.
 The operator reads the kubeconfig Secret from **the RemoteCluster's own
 namespace** — verified: `makeRemoteClient` sets
 `Namespace: s.remoteCluster.Namespace` for the Secret lookup
-(`remotearbiter_controller.go` ~L1225–1233). So the Secret lives in `rook-ceph`
-(where we put the RemoteCluster CR), while its *token* grants access to the
-`external-arbiter` namespace.
+(`remotearbiter_controller.go` ~L1225–1233). The implemented harness places the
+operator, the `RemoteCluster`/`RemoteArbiter` CRs, and the Secret all in
+`arbiter-operator` (matching the chart/README convention), so the Secret is read
+from `arbiter-operator`, while its *token* grants access to the
+`external-arbiter` namespace. (The snippets below predate that decision and show
+`rook-ceph`; the shipped `manifests/` use `arbiter-operator`.)
 
 Create an SA in `external-arbiter` bound to a Role that is the arbiter-installer
 RBAC **reused verbatim from `pkg/controller/suite_test.go` (~L232–270)** — that
@@ -247,10 +253,12 @@ kubectl -n rook-ceph exec $TOOLS -- ceph -s | grep -qiE 'HEALTH_ERR|no quorum' &
 test "$NUM" -ge 3 && test "$ARB" -ge 1 && echo "PASS: quorum survived, arbiter voting" || { echo FAIL; exit 1; }
 ```
 
-**Negative control (optional, `NEGATIVE_CONTROL=1`)** — kill a *second* source
-mon → 2/4, no majority → `ceph -s` reports no quorum. This proves Predicate 2
-isn't vacuous (that quorum *can* be lost, and the arbiter is what prevents it at
-one loss). Gated off by default because it's slow and destructive.
+**Negative control (`NEGATIVE_CONTROL=1`)** — kill a *second* source
+mon → 2/4, no majority → quorum lost. This proves Predicate 2 isn't vacuous
+(quorum *can* be lost, and the arbiter's vote is what prevents it at one loss).
+The positive run alone shows the arbiter is *present* in a surviving quorum; only
+the positive+negative **pair** isolates the arbiter's vote as load-bearing. Run
+both — the positive run is a smoke test on its own.
 
 ## In-repo layout & entry point
 

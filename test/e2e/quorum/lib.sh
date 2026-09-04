@@ -13,6 +13,9 @@ TARGET_NS="external-arbiter"   # where the arbiter mon Deployment lands
 
 IMAGE="localhost:5000/cobaltcore-dev/external-arbiter-operator:latest"
 
+# Where 70-kill-mon.sh records the killed ceph mon id(s) for 80 to assert absent.
+VICTIM_FILE="${VICTIM_FILE:-${TMPDIR:-/tmp}/arbiter-e2e-victims}"
+
 # Repo root = two levels up from this file (test/e2e/quorum/).
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${HERE}/../../.." && pwd)"
@@ -29,9 +32,20 @@ rook_url() { printf 'https://raw.githubusercontent.com/rook/rook/v%s/deploy/exam
 # The rook-ceph-tools pod name (Ceph CLI runs inside it).
 toolbox_pod() { kubectl -n "${ROOK_NS}" get pod -l app=rook-ceph-tools -o name | head -1; }
 
-# ceph quorum_status as JSON, run in the toolbox.
-quorum_json() {
+# Run a ceph command in the toolbox with a bounded connection timeout, so a
+# lost-quorum cluster fails fast instead of hanging (ceph blocks waiting for a
+# mon otherwise). Also wrap in a host-side timeout when one is available
+# (macOS base has none; coreutils provides gtimeout).
+TIMEOUT_BIN="$(command -v timeout || command -v gtimeout || true)"
+ceph_exec() {
   local tb; tb="$(toolbox_pod)"
   [ -n "${tb}" ] || die "no rook-ceph-tools pod"
-  kubectl -n "${ROOK_NS}" exec "${tb}" -- ceph quorum_status --format json
+  if [ -n "${TIMEOUT_BIN}" ]; then
+    "${TIMEOUT_BIN}" 60 kubectl -n "${ROOK_NS}" exec "${tb}" -- "$@" --connect-timeout 15
+  else
+    kubectl -n "${ROOK_NS}" exec "${tb}" -- "$@" --connect-timeout 15
+  fi
 }
+
+# ceph quorum_status as JSON, run in the toolbox.
+quorum_json() { ceph_exec ceph quorum_status --format json; }

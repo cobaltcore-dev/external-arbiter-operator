@@ -23,17 +23,20 @@ Real Ceph is never small — the one-cluster/two-namespace topology removes the
 | Step | |
 |---|---|
 | `00-k3d-up` | k3d cluster, 1 server + 2 agents (mon anti-affinity wants 3 nodes) |
-| `10-rook-install` | cert-manager (operator webhooks need it) + Rook operator v1.18.6 |
-| `20-cephcluster` | source `CephCluster` `mon.count=3`, loopback-PVC OSDs, wait Ready |
+| `10-rook-install` | cert-manager (operator webhooks need it) + Rook operator v1.18.6, CSI disabled |
+| `15-osd-loopdev` | privileged DaemonSet: sparse file → `losetup` loop device per node (k3d has no spare disk) |
+| `20-cephcluster` | source `CephCluster` `mon.count=3`, OSDs on the loop devices (`useAllDevices`), wait Ready |
 | `30-operator-deploy` | `docker build` → `k3d image import` → `helm install` (local.yaml) |
 | `40-remote-kubeconfig` | target ns + installer RBAC + SA-token kubeconfig Secret |
-| `50-apply-arbiter` | `RemoteCluster` + `RemoteArbiter`, wait `state=Ready` |
+| `50-apply-arbiter` | `RemoteCluster` + `RemoteArbiter`, wait `state=Ready`, assert arbiter Deployment (lookup label) |
 | `60-assert-baseline` | 4 mons in quorum, `ext-*` arbiter already voting |
-| `70-kill-mon` | scale one source mon Deployment to 0 |
-| `80-assert-survival` | ≥3 mons, arbiter still voting, not HEALTH_ERR/no-quorum |
+| `70-kill-mon` | scale one source mon Deployment to 0, record its ceph mon id |
+| `80-assert-survival` | victim absent from quorum, ≥3 mons, arbiter still voting |
 
 `NEGATIVE_CONTROL=1` kills a *second* source mon (2/4) and inverts step 80 to
-expect quorum **lost** — proving the positive assertion isn't vacuous.
+expect quorum **lost**. The positive run alone is a smoke test; only the
+positive+negative pair isolates the arbiter's vote as load-bearing — run both
+for the full proof.
 
 ## Namespaces
 
