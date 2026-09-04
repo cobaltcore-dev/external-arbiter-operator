@@ -111,23 +111,15 @@ apiVersion: ceph.rook.io/v1
 kind: CephCluster
 metadata: { name: my-cluster, namespace: rook-ceph }
 spec:
-  cephVersion: { image: quay.io/ceph/ceph:v18 }   # reef, pairs with Rook 1.18
+  cephVersion: { image: quay.io/ceph/ceph:v19 }   # squid, matches the v1.18.6 toolbox CLI
   dataDirHostPath: /var/lib/rook
   mon: { count: 3, allowMultiplePerNode: false }
   mgr: { count: 1 }
   dashboard: { enabled: false }
+  crashCollector: { disable: true }
   storage:
-    storageClassDeviceSets:
-      - name: set1
-        count: 2
-        portable: false
-        volumeClaimTemplates:
-          - metadata: { name: data }
-            spec:
-              resources: { requests: { storage: 5Gi } }
-              storageClassName: local-path
-              volumeMode: Block
-              accessModes: [ ReadWriteOnce ]
+    useAllNodes: true
+    useAllDevices: true     # consumes the loop device from 15-osd-loopdev.sh
   resources:
     mon: { requests: { cpu: "100m", memory: "512Mi" }, limits: { memory: "1Gi" } }
     mgr: { requests: { cpu: "100m", memory: "512Mi" }, limits: { memory: "1Gi" } }
@@ -163,7 +155,7 @@ rule set is already proven sufficient by the envtest suite. Then:
 kubectl -n external-arbiter create token arbiter-installer --duration=24h > /tmp/sa.token
 CA=$(kubectl config view --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
 # render kubeconfig.yaml: server https://kubernetes.default.svc:443, token, ca=$CA
-kubectl -n rook-ceph create secret generic external-arbiter \
+kubectl -n arbiter-operator create secret generic external-arbiter \
   --from-file=kubeconfig.yaml=/tmp/kubeconfig.yaml
 ```
 
@@ -180,7 +172,7 @@ kubectl -n rook-ceph create secret generic external-arbiter \
 ```yaml
 apiVersion: ceph.cobaltcore.sap.com/v1alpha1
 kind: RemoteCluster
-metadata: { name: external-arbiter, namespace: rook-ceph }
+metadata: { name: external-arbiter, namespace: arbiter-operator }
 spec:
   namespace: external-arbiter        # target ns for the arbiter
   accesskeyRef: { name: external-arbiter, key: kubeconfig.yaml }
@@ -189,10 +181,10 @@ spec:
 ---
 apiVersion: ceph.cobaltcore.sap.com/v1alpha1
 kind: RemoteArbiter
-metadata: { name: external-arbiter, namespace: rook-ceph }
+metadata: { name: external-arbiter, namespace: arbiter-operator }
 spec:
   remoteCluster: { name: external-arbiter }
-  cephCluster: { name: my-cluster, namespace: rook-ceph }
+  cephCluster: { name: my-cluster, namespace: rook-ceph }   # the SOURCE Ceph
   monIdPrefix: "ext-"
   service: { type: ClusterIP }       # SEE NOTE — set explicitly, do not omit
   checkInterval: 1m
@@ -211,7 +203,7 @@ require a hand-picked, webhook-validated IPv4 `nodeIp`
 (`remotearbiter_webhook.go` L166–173); LoadBalancer needs a klipper-lb ingress IP
 k3d won't hand out cleanly. Both are left to a future topology-A harness.
 
-Wait for the arbiter: `kubectl -n rook-ceph wait remotearbiter/external-arbiter
+Wait for the arbiter: `kubectl -n arbiter-operator wait remotearbiter/external-arbiter
 --for=jsonpath='{.status.state}'=Ready --timeout=300s` and confirm the arbiter
 mon Deployment exists in `external-arbiter`.
 
@@ -238,8 +230,11 @@ scaled-down mon gives a more stable window than a delete that Rook races to
 recreate):
 
 ```bash
-VICTIM=$(kubectl -n rook-ceph get deploy -l app=rook-ceph-mon -o name | head -1)
+# Deterministic pick; record the ceph mon id so the assertion can prove it is
+# actually gone from quorum (not merely that >=3 mons remain).
+VICTIM=$(kubectl -n rook-ceph get deploy -l app=rook-ceph-mon -o name | sort | head -1)
 kubectl -n rook-ceph scale $VICTIM --replicas=0
+basename "$VICTIM" | sed 's/^rook-ceph-mon-//' > /tmp/victim
 sleep 20   # let the mon election settle
 ```
 
@@ -247,11 +242,17 @@ sleep 20   # let the mon election settle
 
 ```bash
 Q=$(kubectl -n rook-ceph exec $TOOLS -- ceph quorum_status --format json)
+NAMES=$(echo "$Q" | jq -r '.quorum_names[]')
 NUM=$(echo "$Q" | jq '.quorum_names | length')
 ARB=$(echo "$Q" | jq '[.quorum_names[] | select(startswith("ext-"))] | length')
-kubectl -n rook-ceph exec $TOOLS -- ceph -s | grep -qiE 'HEALTH_ERR|no quorum' && { echo FAIL; exit 1; }
-test "$NUM" -ge 3 && test "$ARB" -ge 1 && echo "PASS: quorum survived, arbiter voting" || { echo FAIL; exit 1; }
+# The killed mon must be ABSENT (a >=3 count alone would be satisfied by Rook
+# re-creating the victim), and exactly 3 must remain: 3 source − 1 + arbiter.
+echo "$NAMES" | grep -qx "$(cat /tmp/victim)" && { echo "FAIL: victim back"; exit 1; }
+test "$NUM" -eq 3 && test "$ARB" -ge 1 && echo "PASS: quorum survived, arbiter voting" || { echo FAIL; exit 1; }
 ```
+
+(No `HEALTH_ERR` check here — a cluster can be `HEALTH_ERR` for OSD/PG reasons
+while quorum is perfectly intact; that string does not imply quorum loss.)
 
 **Negative control (`NEGATIVE_CONTROL=1`)** — kill a *second* source
 mon → 2/4, no majority → quorum lost. This proves Predicate 2 isn't vacuous
@@ -315,10 +316,12 @@ label / manual dispatch, never on every PR — it's a 12-minute, 16 GB job.
 - **Production scale/timing.** Laptop-scale mon election, OSD, and failover
   timings differ from real multi-node clusters with real disks.
 - **Determinism of the kill window.** Scaling the victim mon to 0 leaves Rook
-  free to try re-creating it; the 20 s settle is a heuristic. A flaky run means
-  Rook re-elected faster than expected, not that the property failed — re-run or
-  widen the window. (A future hardening: cordon Rook's mon-failover by pausing
-  the CephCluster reconcile during the assertion.)
+  free to try re-creating it; the 20 s settle is a heuristic. The assertion is
+  *safe* against this (it requires the victim id absent AND exactly 3 mons, so a
+  re-created victim fails loudly rather than false-passing) — but it can still be
+  *flaky*: if Rook re-creates fast, a correct run fails and must be re-run or the
+  window widened. (A future hardening: cordon Rook's mon-failover by pausing the
+  CephCluster reconcile during the assertion.)
 
 ## Follow-on
 

@@ -44,3 +44,11 @@ for the full proof.
 - `arbiter-operator` — the operator, the CRs, and the accesskeyRef Secret
   (`makeRemoteClient` reads the Secret from the RemoteCluster's own namespace).
 - `external-arbiter` — where the arbiter mon Deployment lands (`spec.namespace`).
+
+## Caveats
+
+- `KEEP_CLUSTER=1` re-runs on the *same* cluster are not idempotent (a scaled-to-0
+  victim mon, stale namespaces, and the loop backing file persist). For a clean
+  run, let teardown delete the cluster (the default) or `make test-e2e-quorum-teardown`.
+- Running individual steps out of order reuses `$VICTIM_FILE`
+  (`${TMPDIR:-/tmp}/arbiter-e2e-victims`); clear it between unrelated manual runs.

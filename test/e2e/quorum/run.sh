@@ -14,6 +14,13 @@ source "${HERE}/lib.sh"
 
 for t in docker k3d kubectl jq helm; do need "${t}"; done
 
+# `kubectl wait --for=jsonpath=` (used by steps 20/50) needs kubectl >= 1.23.
+# Fail early with a clear message rather than a cryptic mid-run flag error.
+kube_minor="$(kubectl version --client -o json 2>/dev/null \
+  | jq -r '.clientVersion.minor | gsub("[^0-9]";"")' 2>/dev/null || echo 0)"
+[ "${kube_minor:-0}" -ge 23 ] 2>/dev/null \
+  || die "kubectl >= 1.23 required for 'wait --for=jsonpath' (got minor '${kube_minor}')"
+
 # Always tear down (unless KEEP_CLUSTER=1) even if a step fails.
 cleanup() { bash "${HERE}/99-teardown.sh" || true; }
 trap cleanup EXIT

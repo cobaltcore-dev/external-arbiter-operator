@@ -7,8 +7,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 log "baseline quorum check"
 Q="$(quorum_json)"
-echo "${Q}" | jq -e '.quorum_names | length >= 4' >/dev/null \
-  || die "expected >=4 mons in quorum, got: $(echo "${Q}" | jq -c '.quorum_names')"
+# Exactly 4 mons: 3 source (mon.count=3) + 1 arbiter. Anything else means the
+# baseline topology is wrong (extra/failed-over mon), which would undermine the
+# "kill one → 3/4 majority" arithmetic the whole proof rests on.
+echo "${Q}" | jq -e '.quorum_names | length == 4' >/dev/null \
+  || die "expected exactly 4 mons in quorum, got: $(echo "${Q}" | jq -c '.quorum_names')"
 echo "${Q}" | jq -e '[.quorum_names[] | select(startswith("ext-"))] | length >= 1' >/dev/null \
   || die "arbiter (ext-*) not in quorum: $(echo "${Q}" | jq -c '.quorum_names')"
 
