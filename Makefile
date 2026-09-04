@@ -77,9 +77,74 @@ deps:
 	mkdir -p contrib/k8s/3rdparty
 	cp -r rook/deploy/examples/crds.yaml contrib/k8s/3rdparty/rook.yaml
 
+.PHONY: test-unit
+test-unit:
+	go test -race -shuffle=on -count=1 ./pkg/controller/... ./pkg/webhook/... ./test/...
+
+# test-unit-repeat re-runs the unit suites REPEAT (default 20) times, each with a
+# fresh shuffle/Ginkgo seed, to expose order dependence and flakes (#67). Ginkgo
+# rejects `go test -count>1`, so the suite is looped instead.
+REPEAT ?= 20
+.PHONY: test-unit-repeat
+test-unit-repeat:
+	@for i in $$(seq 1 $(REPEAT)); do \
+		echo "=== unit run $$i/$(REPEAT) ==="; \
+		go test -race -shuffle=on -count=1 ./pkg/controller/... ./pkg/webhook/... ./test/... || exit 1; \
+	done
+
+.PHONY: test-envtest
+test-envtest: env
+	KUBEBUILDER_ASSETS="$(abspath $(shell go tool setup-envtest use $(K8S_VERSION) --bin-dir ./.env -p path))" \
+		go test -tags envtest -shuffle=on -count=1 ./pkg/controller/...
+
+.PHONY: test-all
+test-all: test-unit test-envtest
+
+# test-cover reports statement coverage for the reconciler and webhook packages,
+# merging the pure-unit and envtest (build-tagged) runs into one profile. The
+# controller package is exercised almost entirely by the envtest suite, so a
+# unit-only profile understates it — both runs must be merged. This target
+# REPORTS a number; it does not gate. Set a floor with COVER_MIN once the number
+# is stable, then ratchet it up as gaps in docs/testing/traceability.md close.
+# ponytail: report-only until a measured floor exists; gate via COVER_MIN when set.
+COVER_MIN ?=
+.PHONY: test-cover
+test-cover: env
+	go test -race -shuffle=on -count=1 -coverprofile=cover.unit.out \
+		-coverpkg=./pkg/... ./pkg/webhook/... ./test/...
+	KUBEBUILDER_ASSETS="$(abspath $(shell go tool setup-envtest use $(K8S_VERSION) --bin-dir ./.env -p path))" \
+		go test -tags envtest -shuffle=on -count=1 -coverprofile=cover.envtest.out \
+		-coverpkg=./pkg/... ./pkg/controller/...
+	@{ echo "mode: atomic"; \
+	   grep -h -v '^mode:' cover.unit.out cover.envtest.out; } > cover.out
+	@go tool cover -func=cover.out | tail -1
+	@total=$$(go tool cover -func=cover.out | tail -1 | grep -oE '[0-9]+\.[0-9]+'); \
+	if [ -n "$(COVER_MIN)" ]; then \
+		awk -v t="$$total" -v m="$(COVER_MIN)" 'BEGIN{ if (t+0 < m+0){ printf "coverage %.1f%% below floor %s%%\n", t, m; exit 1 } else { printf "coverage %.1f%% meets floor %s%%\n", t, m } }'; \
+	fi
+
+
+# test runs the full layered suite (unit + envtest). It does not mutate source
+# or run `pretty`. It does NOT clone Rook: the envtest suite loads CephCluster
+# CRDs from contrib/k8s/3rdparty/, which `make deps` populates (a one-time
+# network clone) — on a checkout without that directory, run `make deps` first.
+# `make env` still downloads the envtest kube binaries on a cache miss.
 .PHONY: test
-test: pretty env deps
-	go test ./...
+test: test-all
+
+# test-e2e-quorum brings up a throwaway k3d cluster with real Rook Ceph + the
+# operator, deploys an arbiter mon into a second namespace, then kills a source
+# mon and asserts quorum survives *because* the arbiter votes. This is the only
+# test that proves the live quorum-survival property (issues #70/#71) end to end.
+# It is NOT part of `make test`: it needs docker + k3d + helm, ~16GB RAM, ~12min.
+# ROOK_VERSION is stripped of the quotes the variable carries for the URL builder.
+.PHONY: test-e2e-quorum
+test-e2e-quorum:
+	ROOK_VERSION=$(patsubst "%",%,$(ROOK_VERSION)) bash test/e2e/quorum/run.sh
+
+.PHONY: test-e2e-quorum-teardown
+test-e2e-quorum-teardown:
+	bash test/e2e/quorum/99-teardown.sh
 
 .PHONY: clean
 clean:

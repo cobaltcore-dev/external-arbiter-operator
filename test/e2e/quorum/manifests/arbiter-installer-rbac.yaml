@@ -1,0 +1,51 @@
+# Arbiter-installer RBAC in the target namespace. The operator's "remote" client
+# (built from the kubeconfig Secret) uses this ServiceAccount to create the
+# arbiter mon Deployment + its Service/Secrets/ConfigMap.
+#
+# The rules are copied VERBATIM from pkg/controller/suite_test.go
+# (arbiterInstallerRole, ~L232-270) — that set is already proven sufficient by
+# the envtest suite. Keep the two in sync if the controller's remote writes change.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: arbiter-installer
+  namespace: external-arbiter
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: arbiter-installer-role
+  namespace: external-arbiter
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/status"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/finalizers"]
+    verbs: ["update"]
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets", "services"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps/status", "secrets/status", "services/status"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps/finalizers", "secrets/finalizers", "services/finalizers"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: arbiter-installer-rolebinding
+  namespace: external-arbiter
+subjects:
+  - kind: ServiceAccount
+    name: arbiter-installer
+    namespace: external-arbiter
+roleRef:
+  kind: Role
+  name: arbiter-installer-role
+  apiGroup: rbac.authorization.k8s.io

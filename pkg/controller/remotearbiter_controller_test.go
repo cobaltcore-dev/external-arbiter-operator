@@ -1,3 +1,5 @@
+//go:build envtest
+
 // Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
 // SPDX-License-Identifier: Apache-2.0
 
@@ -5,6 +7,7 @@ package controller
 
 import (
 	"fmt"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -99,28 +102,29 @@ var _ = Describe("RemoteArbiter Controller", func() {
 				&v1alpha1.RemoteCluster{},
 				&v1alpha1.RemoteArbiter{},
 			}
-			err := namespaceCleanUp(sourceK8sClient, sourceClusterTypes, namespaceName)
-			Expect(err).NotTo(HaveOccurred())
-
 			targetClusterTypes := []client.Object{
 				&corev1.Secret{},
 				&corev1.Service{},
 				&corev1.ConfigMap{},
 				&appsv1.Deployment{},
 			}
-			err = namespaceCleanUp(targetK8sClient, targetClusterTypes, ArbiterInstallationNamespaceName)
-			Expect(err).NotTo(HaveOccurred())
 
+			// The controller is still reconciling: a live source RemoteArbiter
+			// keeps re-creating target objects (which carry RemoteArbiterFinalizer
+			// and live on the target API server), and racing Updates on both
+			// clusters return Conflict. Cleaning once cannot win the race, so we
+			// force-empty both namespaces every pass until BOTH are empty in the
+			// SAME pass: source first (so the RemoteArbiter is gone and stops
+			// re-populating target), target second. namespaceCleanUp tolerates
+			// Conflict/NotFound and re-lists each pass with fresh resourceVersions,
+			// making teardown order-independent for RandomizeAllSpecs. (#78)
 			Eventually(func(g Gomega) {
-				empty, err := namespaceEmpty(sourceK8sClient, sourceClusterTypes, namespaceName)
+				sourceEmpty, err := namespaceCleanUp(sourceK8sClient, sourceClusterTypes, namespaceName)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(empty).To(BeTrue())
-			}, Timeout, Interval).Should(Succeed())
-
-			Eventually(func(g Gomega) {
-				empty, err := namespaceEmpty(sourceK8sClient, sourceClusterTypes, ArbiterInstallationNamespaceName)
+				targetEmpty, err := namespaceCleanUp(targetK8sClient, targetClusterTypes, ArbiterInstallationNamespaceName)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(empty).To(BeTrue())
+				g.Expect(sourceEmpty).To(BeTrue())
+				g.Expect(targetEmpty).To(BeTrue())
 			}, Timeout, Interval).Should(Succeed())
 		})
 
@@ -588,6 +592,14 @@ var _ = Describe("RemoteArbiter Controller", func() {
 			err = targetK8sClient.Status().Update(ctx, arbiterDeployment)
 			Expect(err).NotTo(HaveOccurred())
 
+			// The RemoteArbiter reconciler runs on the source manager and has no
+			// watch on the target-cluster arbiter Deployment (it reaches the target
+			// via an ad-hoc remote client, not a controller-runtime watch). So after
+			// we flip the Deployment to ready here, the RA only re-observes it on its
+			// next requeue, which is Spec.CheckInterval (defaults to 1 minute) on the
+			// happy path. A 30s Timeout is shorter than that interval, so this wait
+			// passed only when a requeue happened to land inside the window — the
+			// residual flake behind #78. Wait longer than the requeue interval. (#78)
 			Eventually(func(g Gomega) {
 				err := sourceK8sClient.Get(ctx, remoteArbiterNamespacedName, remoteArbiter)
 				g.Expect(err).NotTo(HaveOccurred())
@@ -601,7 +613,7 @@ var _ = Describe("RemoteArbiter Controller", func() {
 						g.Expect(condition.Message).NotTo(BeEmpty())
 					}
 				}
-			}, Timeout, Interval).Should(Succeed())
+			}, time.Minute*2, Interval).Should(Succeed())
 		})
 	})
 })

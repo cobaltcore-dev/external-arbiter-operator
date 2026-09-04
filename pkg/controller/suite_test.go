@@ -1,3 +1,5 @@
+//go:build envtest
+
 // Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
 // SPDX-License-Identifier: Apache-2.0
 
@@ -17,14 +19,15 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/cobaltcore-dev/external-arbiter-operator/pkg/api/arbiter/v1alpha1"
+	"github.com/cobaltcore-dev/external-arbiter-operator/test/builders"
 
 	rookv1 "github.com/rook/rook/pkg/apis/ceph.rook.io/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -81,7 +84,20 @@ func freePort() (int, error) {
 	return tcpAddress.Port, nil
 }
 
-func namespaceEmpty(k8sClient client.Client, clusterTypes []client.Object, namespace string) (bool, error) {
+// namespaceCleanUp force-empties the namespace of every given type and reports
+// whether it is now empty. It is designed to run inside an Eventually loop: the
+// controller is still reconciling during teardown, so a single pass races it
+// (stale-resourceVersion Update conflicts; objects re-created after deletion).
+// Each pass re-lists (fresh resourceVersions), strips finalizers, and deletes,
+// tolerating NotFound and Conflict — the next Eventually pass retries with a
+// fresh GET. Objects created by the controller carry RemoteArbiterFinalizer and
+// several error-path specs leave them behind where no reconcile removes it, so
+// teardown must not depend on reconcile semantics: it force-strips finalizers.
+// Repeating until empty converges once the source RemoteArbiter is gone and the
+// controller stops re-creating children, giving RandomizeAllSpecs order-
+// independent specs. (#78)
+func namespaceCleanUp(k8sClient client.Client, clusterTypes []client.Object, namespace string) (bool, error) {
+	empty := true
 	for _, clusterType := range clusterTypes {
 		gvk, err := k8sClient.GroupVersionKindFor(clusterType)
 		if err != nil {
@@ -96,39 +112,36 @@ func namespaceEmpty(k8sClient client.Client, clusterTypes []client.Object, names
 		}
 
 		if len(objectList.Items) != 0 {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
-func namespaceCleanUp(k8sClient client.Client, clusterTypes []client.Object, namespace string) error {
-	for _, clusterType := range clusterTypes {
-		gvk, err := k8sClient.GroupVersionKindFor(clusterType)
-		if err != nil {
-			return fmt.Errorf("unable to get gvk: %w", err)
+			empty = false
 		}
 
-		objectList := &unstructured.UnstructuredList{}
-		objectList.SetGroupVersionKind(gvk)
-		err = k8sClient.List(ctx, objectList, &client.ListOptions{Namespace: namespace})
-		if err != nil {
-			return fmt.Errorf("unable to list resources: %w", err)
-		}
-
-		for _, item := range objectList.Items {
-			if err = k8sClient.Delete(ctx, &item); err != nil {
-				return fmt.Errorf("unable to delete resource: %w", err)
+		for i := range objectList.Items {
+			item := &objectList.Items[i]
+			if len(item.GetFinalizers()) != 0 {
+				item.SetFinalizers(nil)
+				if err = k8sClient.Update(ctx, item); err != nil &&
+					!apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
+					return false, fmt.Errorf("unable to strip finalizers: %w", err)
+				}
+			}
+			if err = k8sClient.Delete(ctx, item); err != nil && !apierrors.IsNotFound(err) {
+				return false, fmt.Errorf("unable to delete resource: %w", err)
 			}
 		}
 	}
-	return nil
+	return empty, nil
 }
 
 func TestControllers(t *testing.T) {
 	RegisterFailHandler(Fail)
 
-	RunSpecs(t, "Controller Suite")
+	// Randomize spec order to surface hidden order dependence between specs.
+	// The AfterEach cleanup now waits (on the correct API server) for all
+	// finalizer-bearing objects to be fully gone before the next spec runs
+	// (#78), so specs are independent of declaration order.
+	suiteConfig, _ := GinkgoConfiguration()
+	suiteConfig.RandomizeAllSpecs = true
+	RunSpecs(t, "Controller Suite", suiteConfig)
 }
 
 var _ = BeforeSuite(func() {
@@ -291,35 +304,10 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(sourceK8sClient).NotTo(BeNil())
 
-	monitorDeploymentBytes, err := os.ReadFile("../../contrib/k8s/test/mon-deployment.yaml")
-	Expect(err).NotTo(HaveOccurred())
-	monitorEnvVarSecretBytes, err := os.ReadFile("../../contrib/k8s/test/env-var-secret.yaml")
-	Expect(err).NotTo(HaveOccurred())
-	monitorKeyringSecretBytes, err := os.ReadFile("../../contrib/k8s/test/keyring-secret.yaml")
-	Expect(err).NotTo(HaveOccurred())
-	monitorOverrideConfigMapBytes, err := os.ReadFile("../../contrib/k8s/test/override-configmap.yaml")
-	Expect(err).NotTo(HaveOccurred())
-
-	resourceDeserializer := serializer.NewCodecFactory(scheme.Scheme).UniversalDeserializer()
-
-	monitorDeploymentObject, _, err := resourceDeserializer.Decode(monitorDeploymentBytes, nil, nil)
-	Expect(err).NotTo(HaveOccurred())
-	monitorEnvVarSecretObject, _, err := resourceDeserializer.Decode(monitorEnvVarSecretBytes, nil, nil)
-	Expect(err).NotTo(HaveOccurred())
-	monitorKeyringSecretObject, _, err := resourceDeserializer.Decode(monitorKeyringSecretBytes, nil, nil)
-	Expect(err).NotTo(HaveOccurred())
-	monitorOverrideConfigMapObject, _, err := resourceDeserializer.Decode(monitorOverrideConfigMapBytes, nil, nil)
-	Expect(err).NotTo(HaveOccurred())
-
-	var ok bool
-	refMonitorDeployment, ok = monitorDeploymentObject.(*appsv1.Deployment)
-	Expect(ok).To(BeTrue())
-	refMonitorEnvVarSecret, ok = monitorEnvVarSecretObject.(*corev1.Secret)
-	Expect(ok).To(BeTrue())
-	refMonitorKeyringSecret, ok = monitorKeyringSecretObject.(*corev1.Secret)
-	Expect(ok).To(BeTrue())
-	refMonitorOverrideConfigMap, ok = monitorOverrideConfigMapObject.(*corev1.ConfigMap)
-	Expect(ok).To(BeTrue())
+	refMonitorDeployment = builders.MonitorDeployment()
+	refMonitorEnvVarSecret = builders.MonitorEnvVarSecret()
+	refMonitorKeyringSecret = builders.MonitorKeyringSecret()
+	refMonitorOverrideConfigMap = builders.MonitorOverrideConfigMap()
 })
 
 var _ = AfterSuite(func() {
