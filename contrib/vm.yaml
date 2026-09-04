@@ -40,7 +40,7 @@ provision:
     set -eux -o pipefail
     # Install and configure prerequisites + kubeadm/kubelet/kubectl
     if ! command -v kubeadm >/dev/null 2>&1; then
-      cat <<EOF >/etc/modules-load.d/containerd.conf
+      cat <<EOF | sudo tee /etc/modules-load.d/containerd.conf
       overlay
       br_netfilter
     EOF
@@ -55,7 +55,7 @@ provision:
       export DEBIAN_FRONTEND=noninteractive
       apt-get update
       apt-get install -y apt-transport-https ca-certificates curl
-      VERSION="1.37"
+      VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt | sed -e 's/v//' | cut -d'.' -f1-2)
       echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v${VERSION}/deb/ /" | sudo tee /etc/apt/sources.list.d/kubernetes.list
       mkdir -p /etc/apt/keyrings
       curl -fsSL https://pkgs.k8s.io/core:/stable:/v${VERSION}/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
@@ -113,18 +113,20 @@ provision:
   script: |
     #!/bin/bash
     set -eux -o pipefail
-    test -f /etc/containerd/conf.d/cri.toml \
-      && grep -qF '/etc/containerd/conf.d/*.toml' /etc/containerd/config.toml \
-      && exit 0
+    NEEDS_RESTART=false
     # Use a drop-in config to avoid duplicating the CRI plugin table
     # that Lima already creates in the main config.toml
+    if ! grep -qF 'version = 2' /etc/containerd/config.toml; then
+      echo >&2 "Unexpected containerd config format; expected 'version = 2' in /etc/containerd/config.toml"
+      exit 1
+    fi
     mkdir -p /etc/containerd/conf.d
-    if ! grep -qE '^[[:space:]]*imports[[:space:]]*=' /etc/containerd/config.toml; then
+    if ! grep -qE '^[[:space:]]*imports[[:space:]]*=.*conf\.d/\*\.toml' /etc/containerd/config.toml; then
       sed -i '1iimports = ["/etc/containerd/conf.d/*.toml"]' /etc/containerd/config.toml
+      NEEDS_RESTART=true
     fi
     PAUSE_IMAGE=$(kubeadm config images list | grep pause | sort -r | head -n1)
-    cat <<EOF >/etc/containerd/conf.d/cri.toml
-    version = 2
+    DESIRED=$(cat <<EOF
     [plugins."io.containerd.grpc.v1.cri"]
       sandbox_image = "${PAUSE_IMAGE}"
       [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
@@ -132,7 +134,18 @@ provision:
         [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
           SystemdCgroup = true
     EOF
-    systemctl restart containerd
+    )
+    CURRENT=""
+    if [ -f /etc/containerd/conf.d/cri.toml ]; then
+      CURRENT=$(cat /etc/containerd/conf.d/cri.toml)
+    fi
+    if [ "$DESIRED" != "$CURRENT" ]; then
+      echo "$DESIRED" > /etc/containerd/conf.d/cri.toml
+      NEEDS_RESTART=true
+    fi
+    if [ "$NEEDS_RESTART" = true ]; then
+      systemctl restart containerd
+    fi
 - mode: system
   script: |
     #!/bin/bash
