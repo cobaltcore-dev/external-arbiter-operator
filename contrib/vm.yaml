@@ -70,24 +70,33 @@ provision:
     rm -f /etc/cni/net.d/*.conf*
     apt-get install -y kubelet kubeadm kubectl && apt-mark hold kubelet kubeadm kubectl
     systemctl enable --now kubelet
+    # Install Helm
+    curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    # Install Cilium CLI
+    CILIUM_CLI_VERSION=$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
+    CLI_ARCH=amd64
+    if [ "$(uname -m)" = "aarch64" ]; then CLI_ARCH=arm64; fi
+    curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-${CLI_ARCH}.tar.gz{,.sha256sum}
+    sha256sum --check cilium-linux-${CLI_ARCH}.tar.gz.sha256sum
+    tar xzvfC cilium-linux-${CLI_ARCH}.tar.gz /usr/local/bin
+    rm cilium-linux-${CLI_ARCH}.tar.gz{,.sha256sum}
 - mode: system
   script: |
     #!/bin/bash
     set -eux -o pipefail
-    grep SystemdCgroup /etc/containerd/config.toml && exit 0
-    grep "version = 2" /etc/containerd/config.toml || exit 1
-    # Configuring the systemd cgroup driver
-    # Overriding the sandbox (pause) image
-    cat <<EOF >>/etc/containerd/config.toml
-      [plugins]
-        [plugins."io.containerd.grpc.v1.cri"]
-          sandbox_image = "$(kubeadm config images list | grep pause | sort -r | head -n1)"
-          [plugins."io.containerd.grpc.v1.cri".containerd]
-            [plugins."io.containerd.grpc.v1.cri".containerd.runtimes]
-              [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
-                runtime_type = "io.containerd.runc.v2"
-                [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
-                  SystemdCgroup = true
+    test -f /etc/containerd/conf.d/cri.toml && exit 0
+    # Use a drop-in config to avoid duplicating the CRI plugin table
+    # that Lima already creates in the main config.toml
+    mkdir -p /etc/containerd/conf.d
+    PAUSE_IMAGE=$(kubeadm config images list | grep pause | sort -r | head -n1)
+    cat <<EOF >/etc/containerd/conf.d/cri.toml
+    version = 2
+    [plugins."io.containerd.grpc.v1.cri"]
+      sandbox_image = "${PAUSE_IMAGE}"
+      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+        runtime_type = "io.containerd.runc.v2"
+        [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+          SystemdCgroup = true
     EOF
     systemctl restart containerd
 - mode: system
@@ -101,12 +110,12 @@ provision:
     # Initializing your control-plane node
     cat <<EOF >kubeadm-config.yaml
     kind: InitConfiguration
-    apiVersion: kubeadm.k8s.io/v1beta3
+    apiVersion: kubeadm.k8s.io/v1beta4
     nodeRegistration:
       criSocket: unix:///run/containerd/containerd.sock
     ---
     kind: ClusterConfiguration
-    apiVersion: kubeadm.k8s.io/v1beta3
+    apiVersion: kubeadm.k8s.io/v1beta4
     apiServer:
       certSANs: # --apiserver-cert-extra-sans
       - "127.0.0.1"
@@ -118,8 +127,12 @@ provision:
     cgroupDriver: systemd
     EOF
     kubeadm init --config kubeadm-config.yaml
-    # Installing a Pod network add-on
-    kubectl apply -f https://github.com/flannel-io/flannel/releases/download/v0.24.0/kube-flannel.yml
+    # Installing Cilium as the Pod network add-on
+    helm repo add cilium https://helm.cilium.io/
+    helm install cilium cilium/cilium --version 1.17.3 \
+      --namespace kube-system \
+      --set operator.replicas=1 \
+      --set ipam.operator.clusterPoolIPv4PodCIDRList="10.244.0.0/16"
     # Control plane node isolation
     kubectl taint nodes --all node-role.kubernetes.io/control-plane-
     # Replace the server address with localhost, so that it works also from the host
@@ -166,7 +179,7 @@ probes:
   script: |
     #!/bin/bash
     set -eux -o pipefail
-    kubectl wait -n kube-system --timeout=180s --for=condition=available deploy coredns
+    kubectl wait -n kube-system --timeout=600s --for=condition=available deploy coredns
 copyToHost:
 - guest: "/etc/kubernetes/admin.conf"
   host: "{{.Dir}}/copied-from-guest/kubeconfig.yaml"
