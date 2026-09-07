@@ -1,0 +1,23 @@
+# RemoteArbiter: deploy a tie-breaker mon into the external-arbiter namespace,
+# joining my-cluster's existing quorum.
+#
+# service.type is set EXPLICITLY to ClusterIP. Spec.Service is a pointer with no
+# field-level default, so omitting it leaves it nil and the arbiter's
+# --public-addr falls back to $(ROOK_POD_IP). Setting it exercises the
+# determinePublicAddressFor ClusterIP branch (returns Spec.ClusterIP), which is
+# routable on the single flat pod network.
+apiVersion: ceph.cobaltcore.sap.com/v1alpha1
+kind: RemoteArbiter
+metadata:
+  name: external-arbiter
+  namespace: arbiter-operator
+spec:
+  remoteCluster:
+    name: external-arbiter
+  cephCluster:
+    name: my-cluster
+    namespace: rook-ceph
+  monIdPrefix: "ext-"
+  service:
+    type: ClusterIP
+  checkInterval: 1m

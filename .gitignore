@@ -31,7 +31,9 @@ build/
 
 # rook dependency
 rook/
-contrib/k8s/3rdparty
+contrib/k8s/3rdparty/*
+# ...except the pinned Rook CRD, vendored so CI needs no network (see #66).
+!contrib/k8s/3rdparty/rook.yaml
 
 # user creation keys and requests
 *.csr

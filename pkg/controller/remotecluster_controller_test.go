@@ -1,3 +1,5 @@
+//go:build envtest
+
 // Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
 // SPDX-License-Identifier: Apache-2.0
 
@@ -51,11 +53,14 @@ var _ = Describe("RemoteCluster Controller", func() {
 				&corev1.Secret{},
 				&v1alpha1.RemoteCluster{},
 			}
-			err := namespaceCleanUp(sourceK8sClient, clusterTypes, namespaceName)
-			Expect(err).NotTo(HaveOccurred())
 
+			// The controller is still reconciling, so Updates race (Conflict) and
+			// finalizer-bearing objects may be re-touched. Force-empty every pass
+			// until the namespace is empty; namespaceCleanUp tolerates
+			// Conflict/NotFound and re-lists with fresh resourceVersions, making
+			// teardown order-independent for RandomizeAllSpecs. (#78)
 			Eventually(func(g Gomega) {
-				empty, err := namespaceEmpty(sourceK8sClient, clusterTypes, namespaceName)
+				empty, err := namespaceCleanUp(sourceK8sClient, clusterTypes, namespaceName)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(empty).To(BeTrue())
 			}, Timeout, Interval).Should(Succeed())

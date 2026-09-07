@@ -1,0 +1,72 @@
+# Attaches a raw loop-backed block device to every node so Rook's useAllDevices
+# has something to make an OSD from — k3d nodes have no spare real disk and the
+# local-path StorageClass can't serve volumeMode: Block.
+#
+# Privileged DaemonSet: create a sparse backing file on the node, losetup it,
+# then sleep forever (the loop device must stay attached while Rook prepares and
+# runs the OSD). Idempotent: reuses an existing loop for the same backing file.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: osd-loopdev
+  namespace: rook-ceph
+  labels:
+    app: osd-loopdev
+spec:
+  selector:
+    matchLabels:
+      app: osd-loopdev
+  template:
+    metadata:
+      labels:
+        app: osd-loopdev
+    spec:
+      hostPID: true
+      containers:
+        - name: loopdev
+          # rook/ceph ships util-linux losetup (busybox's applet lacks -j and
+          # `-f --show`); the image is already pulled for the cluster.
+          image: rook/ceph:v1.18.6
+          securityContext:
+            privileged: true
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              BACKING=/mnt/osd-data/ceph-osd.img
+              mkdir -p /mnt/osd-data
+              if [ ! -f "$BACKING" ]; then
+                # 8Gi sparse file — enough for a single test OSD.
+                truncate -s 8G "$BACKING"
+              fi
+              # Reuse an existing association for this file (survives pod
+              # restart), else attach a new one. `losetup -f --show` picks a
+              # free device and attaches atomically; retry on the cross-node
+              # race for the same /dev/loopN (all node containers share one
+              # host kernel and /dev).
+              DEV="$(losetup -j "$BACKING" | cut -d: -f1)"
+              if [ -z "$DEV" ]; then
+                for _ in $(seq 1 10); do
+                  if DEV="$(losetup -f --show "$BACKING" 2>/dev/null)"; then break; fi
+                  DEV=""; sleep 1
+                done
+                [ -n "$DEV" ] || { echo "could not attach loop device for $BACKING" >&2; exit 1; }
+              fi
+              echo "loop device $DEV backed by $BACKING ready"
+              # Hold the association open for the life of the cluster.
+              sleep infinity
+          volumeMounts:
+            - name: osd-data
+              mountPath: /mnt/osd-data
+            - name: dev
+              mountPath: /dev
+      volumes:
+        # Persist the backing file on the node so a pod restart reuses it.
+        - name: osd-data
+          hostPath:
+            path: /var/lib/rook-osd-loop
+            type: DirectoryOrCreate
+        - name: dev
+          hostPath:
+            path: /dev

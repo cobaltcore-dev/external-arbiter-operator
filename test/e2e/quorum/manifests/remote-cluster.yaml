@@ -1,0 +1,16 @@
+# The RemoteCluster CR lives in arbiter-operator, alongside the operator and its
+# accesskeyRef Secret. makeRemoteClient reads the Secret from
+# s.remoteCluster.Namespace, so the Secret must live in the same namespace as
+# this CR. spec.namespace is the TARGET ns where the arbiter mon is deployed.
+apiVersion: ceph.cobaltcore.sap.com/v1alpha1
+kind: RemoteCluster
+metadata:
+  name: external-arbiter
+  namespace: arbiter-operator
+spec:
+  namespace: external-arbiter
+  accesskeyRef:
+    name: external-arbiter
+    key: kubeconfig.yaml
+  checkInterval: 1m
+  timeout: 10s
