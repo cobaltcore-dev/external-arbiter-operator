@@ -114,7 +114,7 @@ provision:
     #!/bin/bash
     set -eux -o pipefail
     test -f /etc/containerd/conf.d/cri.toml \
-      && grep -qE '^[[:space:]]*imports[[:space:]]*=' /etc/containerd/config.toml \
+      && grep -qF '/etc/containerd/conf.d/*.toml' /etc/containerd/config.toml \
       && exit 0
     # Use a drop-in config to avoid duplicating the CRI plugin table
     # that Lima already creates in the main config.toml
