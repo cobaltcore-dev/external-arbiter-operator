@@ -1,0 +1,40 @@
+name: ci-build
+
+on:
+  push:
+
+#env:
+  #IMAGE_NAME: user/app
+
+jobs:
+  container:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ vars.KEPPEL_REGISTRY }}
+          username: ${{ vars.KEPPEL_USERNAME }}
+          password: ${{ secrets.KEPPEL_SECRET }}
+
+      - name: Check Docker version
+        run: docker --version
+      
+      - name: Build 
+        run: | 
+          docker build --label source_repository="https://github.com/cobaltcore-dev/external-arbiter-operator" -t keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter:${{ github.sha }} \
+            -t keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter:latest  .
+      
+      - name: Push image
+        run: | 
+           echo "using image tag -> ${{ github.sha }}"
+           docker push keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter:${{ github.sha }}
+           docker push keppel.eu-de-1.cloud.sap/ccloud/c5413905/remotearbiter:latest
+  
+
+
+      
+   

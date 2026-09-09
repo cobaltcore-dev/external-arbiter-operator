@@ -38,3 +38,6 @@ contrib/k8s/3rdparty
 *.key
 *.crt
 *.kubeconfig
+contrib/charts/external-arbiter-operator/external-arbiter-operator-*.tgz
+contrib/charts/external-arbiter-operator/charts/owner-info-1.0.0.tgz
+contrib/charts/external-arbiter-operator/Chart.lock
