@@ -1,0 +1,635 @@
+#!/usr/bin/env bash
+# Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# arbiter-health - Show external arbiter architecture and health status
+#
+# Usage:
+#   arbiter-health [options]
+#
+# Options:
+#   -n, --namespace <ns>    Operator namespace (default: arbiter-operator)
+#   -a, --arbiter <name>    Arbiter CR name (default: auto-detect)
+#   --ceph-ns <ns>          Rook-Ceph namespace (default: rook-ceph)
+#   --ceph-tools <deploy>   Ceph tools deployment (default: rook-ceph-tools)
+#   --remote-kubeconfig <p> Path to kubeconfig for the remote/target cluster
+#   --remote-context <ctx>  Context name within remote kubeconfig
+#   -w, --watch             Repeat every 5 seconds
+#   -h, --help              Show this help
+#
+set -euo pipefail
+
+# --- defaults ---
+OP_NAMESPACE="arbiter-operator"
+ARBITER_NAME=""
+CEPH_NS="rook-ceph"
+CEPH_TOOLS="rook-ceph-tools"
+REMOTE_KUBECONFIG=""
+REMOTE_CONTEXT=""
+WATCH=false
+
+# --- colors ---
+RESET="\033[0m"
+BOLD="\033[1m"
+GREEN="\033[32m"
+RED="\033[31m"
+YELLOW="\033[33m"
+CYAN="\033[36m"
+DIM="\033[2m"
+WHITE="\033[37m"
+
+usage() {
+  sed -n '8,19p' "$0" | sed 's/^# \?//'
+  exit 0
+}
+
+# --- parse args ---
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -n|--namespace)    OP_NAMESPACE="$2"; shift 2 ;;
+    -a|--arbiter)      ARBITER_NAME="$2"; shift 2 ;;
+    --ceph-ns)         CEPH_NS="$2"; shift 2 ;;
+    --ceph-tools)      CEPH_TOOLS="$2"; shift 2 ;;
+    --remote-kubeconfig) REMOTE_KUBECONFIG="$2"; shift 2 ;;
+    --remote-context)  REMOTE_CONTEXT="$2"; shift 2 ;;
+    -w|--watch)        WATCH=true; shift ;;
+    -h|--help)         usage ;;
+    *)                 echo "Unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+
+# --- helpers ---
+ok()   { printf "${GREEN}OK${RESET}"; }
+err()  { printf "${RED}ERROR${RESET}"; }
+warn() { printf "${YELLOW}WARN${RESET}"; }
+na()   { printf "${DIM}N/A${RESET}"; }
+
+status_icon() {
+  case "$1" in
+    Ready|HEALTH_OK|True|Running|Available) ok ;;
+    Error|HEALTH_ERR|False|CrashLoopBackOff) err ;;
+    HEALTH_WARN|Progressing|Init|Pending) warn ;;
+    *) na ;;
+  esac
+}
+
+# safely fetch a kubectl result, return empty on error
+kget() {
+  local result
+  result=$(kubectl "$@" 2>/dev/null) || true
+  echo "${result:-}"
+}
+
+# run a command inside a pod, capture stdout, suppress stderr
+kexec() {
+  local ns="$1" target="$2"
+  shift 2
+  local result
+  result=$(kubectl exec "$target" -n "$ns" -- "$@" 2>/dev/null) || true
+  echo "${result:-}"
+}
+
+# query the remote/target cluster (where the arbiter pod runs)
+# uses REMOTE_KUBECONFIG if resolved, otherwise falls back to kget (same cluster)
+RESOLVED_REMOTE_KUBECONFIG=""
+rget() {
+  if [[ -n "$RESOLVED_REMOTE_KUBECONFIG" ]]; then
+    local args=("$@")
+    local ctx_args=()
+    if [[ -n "$REMOTE_CONTEXT" ]]; then
+      ctx_args=(--context "$REMOTE_CONTEXT")
+    fi
+    local result
+    result=$(kubectl --kubeconfig "$RESOLVED_REMOTE_KUBECONFIG" "${ctx_args[@]}" "${args[@]}" 2>/dev/null) || true
+    echo "${result:-}"
+  else
+    # same-cluster fallback (e.g. single-cluster dev setup)
+    kget "$@"
+  fi
+}
+
+# Extract the remote kubeconfig from the RemoteCluster's accesskeyRef secret.
+# Writes the kubeconfig to a temp file and sets RESOLVED_REMOTE_KUBECONFIG.
+resolve_remote_kubeconfig() {
+  # User explicitly provided a kubeconfig path -- use it directly
+  if [[ -n "$REMOTE_KUBECONFIG" ]]; then
+    if [[ ! -f "$REMOTE_KUBECONFIG" ]]; then
+      printf "${RED}Error: --remote-kubeconfig file not found: %s${RESET}\n" "$REMOTE_KUBECONFIG" >&2
+      return 1
+    fi
+    RESOLVED_REMOTE_KUBECONFIG="$REMOTE_KUBECONFIG"
+    return 0
+  fi
+
+  # Auto-extract from RemoteCluster CR's accesskeyRef secret
+  local rc_name="$1" op_ns="$2"
+  if [[ -z "$rc_name" ]]; then
+    return 0  # no RemoteCluster, fall back to local
+  fi
+
+  local secret_name="" secret_key=""
+  secret_name=$(kget get remotecluster "$rc_name" -n "$op_ns" \
+    -o jsonpath='{.spec.accesskeyRef.name}')
+  secret_key=$(kget get remotecluster "$rc_name" -n "$op_ns" \
+    -o jsonpath='{.spec.accesskeyRef.key}')
+
+  # Apply defaults matching the operator's webhook defaulter
+  if [[ -z "$secret_name" ]]; then secret_name="$rc_name"; fi
+  if [[ -z "$secret_key" ]]; then secret_key="kubeconfig.yaml"; fi
+
+  local kubeconfig_b64=""
+  kubeconfig_b64=$(kget get secret "$secret_name" -n "$op_ns" \
+    -o jsonpath="{.data['${secret_key}']}")
+
+  if [[ -z "$kubeconfig_b64" ]]; then
+    printf "${YELLOW}Warning: Could not extract remote kubeconfig from secret %s/%s (key=%s)${RESET}\n" \
+      "$op_ns" "$secret_name" "$secret_key" >&2
+    printf "${YELLOW}         Remote cluster queries will use current kubeconfig (may be wrong).${RESET}\n" >&2
+    printf "${YELLOW}         Use --remote-kubeconfig <path> to specify explicitly.${RESET}\n" >&2
+    return 0
+  fi
+
+  if [[ -n "$RESOLVED_REMOTE_KUBECONFIG" && "$RESOLVED_REMOTE_KUBECONFIG" != "$REMOTE_KUBECONFIG" ]]; then
+    rm -f "$RESOLVED_REMOTE_KUBECONFIG"
+  fi
+  local tmpkubeconfig
+  tmpkubeconfig=$(mktemp "${TMPDIR:-/tmp}/arbiter-health-remote-XXXXXX.kubeconfig")
+  echo "$kubeconfig_b64" | base64 -d > "$tmpkubeconfig"
+  RESOLVED_REMOTE_KUBECONFIG="$tmpkubeconfig"
+}
+
+render() {
+  # --- auto-detect arbiter ---
+  if [[ -z "$ARBITER_NAME" ]]; then
+    ARBITER_NAME=$(kget get remotearbiter -n "$OP_NAMESPACE" -o jsonpath='{.items[0].metadata.name}')
+    if [[ -z "$ARBITER_NAME" ]]; then
+      printf "${RED}Error: No RemoteArbiter found in namespace %s${RESET}\n" "$OP_NAMESPACE"
+      return 1
+    fi
+  fi
+
+  # ============================
+  # Gather data
+  # ============================
+
+  # RemoteArbiter
+  local ra_json=""
+  ra_json=$(kget get remotearbiter "$ARBITER_NAME" -n "$OP_NAMESPACE" -o json)
+  local ra_state="" ra_msg="" ra_monid="" ra_ceph_name="" ra_ceph_ns="" ra_svc_type="" ra_rc_name=""
+  ra_state=$(echo "$ra_json" | awk -v Q='"' 'BEGIN{RS=""; FS="\n"} {
+    needle = Q "state" Q ":" Q
+    pos = index($0, needle)
+    if (pos == 0) exit
+    rest = substr($0, pos + length(needle))
+    end = index(rest, Q)
+    print substr(rest, 1, end - 1)
+  }')
+  ra_state=$(kget get remotearbiter "$ARBITER_NAME" -n "$OP_NAMESPACE" -o jsonpath='{.status.state}')
+  ra_msg=$(kget get remotearbiter "$ARBITER_NAME" -n "$OP_NAMESPACE" -o jsonpath='{.status.message}')
+  ra_monid=$(kget get remotearbiter "$ARBITER_NAME" -n "$OP_NAMESPACE" -o jsonpath='{.status.monId}')
+  ra_ceph_name=$(kget get remotearbiter "$ARBITER_NAME" -n "$OP_NAMESPACE" -o jsonpath='{.spec.cephCluster.name}')
+  ra_ceph_ns=$(kget get remotearbiter "$ARBITER_NAME" -n "$OP_NAMESPACE" -o jsonpath='{.spec.cephCluster.namespace}')
+  ra_svc_type=$(kget get remotearbiter "$ARBITER_NAME" -n "$OP_NAMESPACE" -o jsonpath='{.spec.service.type}')
+  ra_rc_name=$(kget get remotearbiter "$ARBITER_NAME" -n "$OP_NAMESPACE" -o jsonpath='{.spec.remoteCluster.name}')
+
+  # RemoteArbiter conditions
+  local ra_conditions=""
+  ra_conditions=$(kget get remotearbiter "$ARBITER_NAME" -n "$OP_NAMESPACE" \
+    -o jsonpath='{range .status.conditions[*]}{.type}{" "}{.status}{" "}{.message}{"\n"}{end}')
+
+  # RemoteCluster
+  local rc_name="" rc_state="" rc_msg="" rc_ns="" rc_conditions=""
+  if [[ -z "$ra_rc_name" ]]; then
+    # inline spec, find by owner
+    rc_name=$(kget get remotecluster -n "$OP_NAMESPACE" \
+      -o jsonpath="{.items[?(@.metadata.ownerReferences[0].name=='${ARBITER_NAME}')].metadata.name}")
+  else
+    rc_name="$ra_rc_name"
+  fi
+  if [[ -n "$rc_name" ]]; then
+    rc_state=$(kget get remotecluster "$rc_name" -n "$OP_NAMESPACE" -o jsonpath='{.status.state}')
+    rc_msg=$(kget get remotecluster "$rc_name" -n "$OP_NAMESPACE" -o jsonpath='{.status.message}')
+    rc_ns=$(kget get remotecluster "$rc_name" -n "$OP_NAMESPACE" -o jsonpath='{.spec.namespace}')
+    rc_conditions=$(kget get remotecluster "$rc_name" -n "$OP_NAMESPACE" \
+      -o jsonpath='{range .status.conditions[*]}{.type}{" "}{.status}{" "}{.message}{"\n"}{end}')
+  fi
+
+  # Resolve remote kubeconfig for querying the target cluster
+  resolve_remote_kubeconfig "$rc_name" "$OP_NAMESPACE"
+
+  # CephCluster
+  local ceph_phase="" ceph_health="" ceph_version="" ceph_mon_count="" ceph_ext_mons=""
+  if [[ -z "$ra_ceph_ns" ]]; then ra_ceph_ns="$CEPH_NS"; fi
+  ceph_phase=$(kget get cephcluster "$ra_ceph_name" -n "$ra_ceph_ns" -o jsonpath='{.status.phase}')
+  ceph_health=$(kget get cephcluster "$ra_ceph_name" -n "$ra_ceph_ns" -o jsonpath='{.status.ceph.health}')
+  ceph_version=$(kget get cephcluster "$ra_ceph_name" -n "$ra_ceph_ns" -o jsonpath='{.spec.cephVersion.image}')
+  ceph_mon_count=$(kget get cephcluster "$ra_ceph_name" -n "$ra_ceph_ns" -o jsonpath='{.spec.mon.count}')
+  ceph_ext_mons=$(kget get cephcluster "$ra_ceph_name" -n "$ra_ceph_ns" -o jsonpath='{.spec.mon.externalMonIDs}')
+
+  # Ceph quorum (via tools pod, fallback to mon pod)
+  local ceph_quorum="" ceph_leader="" ceph_mon_list="" ceph_monmap_count="" ceph_monmap_names=""
+  ceph_quorum=$(kexec "$ra_ceph_ns" "deploy/$CEPH_TOOLS" ceph quorum_status -f json --connect-timeout 5)
+
+  if [[ -z "$ceph_quorum" ]]; then
+
+    # fallback: try running ceph CLI via a mon pod
+    local mon_pod
+    mon_pod=$(kget get pod -n "$ra_ceph_ns" -l ceph_daemon_type=mon \
+      -o jsonpath='{.items[0].metadata.name}')
+    if [[ -n "$mon_pod" ]]; then
+      ceph_quorum=$(kexec "$ra_ceph_ns" "$mon_pod" ceph quorum_status -f json --connect-timeout 5)
+    fi
+  fi
+  if [[ -n "$ceph_quorum" ]]; then
+    # extract quorum_leader_name value using sed (portable, no awk quote issues)
+    ceph_leader=$(printf '%s' "$ceph_quorum" \
+      | sed -n 's/.*"quorum_leader_name":"\([^"]*\)".*/\1/p')
+    # extract quorum_names array, strip brackets and quotes
+    ceph_mon_list=$(printf '%s' "$ceph_quorum" \
+      | sed -n 's/.*"quorum_names":\[\([^]]*\)\].*/\1/p' \
+      | sed 's/"//g')
+    # extract monmap.mons array using bracket-matching (mons is nested inside
+    # monmap and followed by other fields, so end-of-string anchors fail)
+    local mons_json=""
+    mons_json=$(printf '%s' "$ceph_quorum" | awk -v Q='"' '
+      {
+        needle = Q "mons" Q ":["
+        pos = index($0, needle)
+        if (pos == 0) exit
+        rest = substr($0, pos + length(needle))
+        depth = 1
+        for (i = 1; i <= length(rest) && depth > 0; i++) {
+          ch = substr(rest, i, 1)
+          if (ch == "[") depth++
+          else if (ch == "]") depth--
+        }
+        print substr(rest, 1, i - 2)
+      }')
+    # count mons by counting "name" keys within the extracted array
+    ceph_monmap_count=$(printf '%s' "$mons_json" \
+      | { grep -o '"name"' || true; } | wc -l | tr -d ' ')
+    if [[ -z "$ceph_monmap_count" || "$ceph_monmap_count" -eq 0 ]]; then
+      ceph_monmap_count=""
+    fi
+    # extract all mon names from the mons array
+    ceph_monmap_names=$(printf '%s' "$mons_json" \
+      | { grep -o '"name":"[^"]*"' || true; } \
+      | sed 's/"name":"//g; s/"//g' \
+      | tr '\n' ',' | sed 's/,$//')
+  fi
+
+  # Mon deployments in rook-ceph
+  local rook_mons="" rook_mon_details=""
+  rook_mons=$(kget get deploy -n "$ra_ceph_ns" -l ceph_daemon_type=mon \
+    -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.readyReplicas}{"/"}{.status.replicas}{"\n"}{end}')
+  # Get mon IDs and readiness for quorum fallback assessment
+  rook_mon_details=$(kget get deploy -n "$ra_ceph_ns" -l ceph_daemon_type=mon \
+    -o jsonpath='{range .items[*]}{.metadata.labels.ceph_daemon_id}{" "}{.status.readyReplicas}{" "}{.status.replicas}{"\n"}{end}')
+
+  # RGW (CephObjectStore) status
+  local rgw_store_phase="" rgw_store_name="" rgw_endpoint="" rgw_deploy_info=""
+  rgw_store_name=$(kget get cephobjectstore -n "$ra_ceph_ns" \
+    -o jsonpath='{.items[0].metadata.name}')
+  if [[ -n "$rgw_store_name" ]]; then
+    rgw_store_phase=$(kget get cephobjectstore "$rgw_store_name" -n "$ra_ceph_ns" \
+      -o jsonpath='{.status.phase}')
+    rgw_endpoint=$(kget get svc "rook-ceph-rgw-${rgw_store_name}" -n "$ra_ceph_ns" \
+      -o jsonpath='{.spec.clusterIP}{":"}{.spec.ports[0].port}')
+    rgw_deploy_info=$(kget get deploy -n "$ra_ceph_ns" \
+      -l "app=rook-ceph-rgw,rook_object_store=${rgw_store_name}" \
+      -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.readyReplicas}{"/"}{.status.replicas}{"\n"}{end}')
+  fi
+
+  # Arbiter deployment on remote cluster
+  local arbiter_deploy_info=""
+  if [[ -n "$rc_ns" ]]; then
+    arbiter_deploy_info=$(rget get deploy -n "$rc_ns" \
+      -l "ceph.cobaltcore.sap.com/lookup=$ARBITER_NAME" \
+      -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.readyReplicas}{"/"}{.status.replicas}{" "}{.spec.template.spec.containers[0].image}{"\n"}{end}')
+  fi
+
+  # Arbiter service on remote cluster
+  local arbiter_svc_info=""
+  if [[ -n "$rc_ns" ]]; then
+    arbiter_svc_info=$(rget get svc -n "$rc_ns" \
+      -l "ceph.cobaltcore.sap.com/lookup=$ARBITER_NAME" \
+      -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.type}{" "}{.spec.clusterIP}{"\n"}{end}')
+  fi
+
+  # ============================
+  # Render
+  # ============================
+  printf "\n"
+  printf "${BOLD}  External Arbiter Architecture & Health${RESET}\n"
+  printf "  ========================================\n"
+  printf "  %s\n\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+  # --- CephCluster ---
+  printf "${BOLD}${CYAN}  +----------------------------------------------+${RESET}\n"
+  printf "${BOLD}${CYAN}  |          CEPH CLUSTER: %-21s |${RESET}\n" "$ra_ceph_name"
+  printf "${BOLD}${CYAN}  |          Namespace:   %-21s |${RESET}\n" "$ra_ceph_ns"
+  printf "${BOLD}${CYAN}  +----------------------------------------------+${RESET}\n"
+  printf "  | Phase:    %-20s [$(status_icon "$ceph_phase")]\n" "${ceph_phase:-unknown}"
+  printf "  | Health:   %-20s [$(status_icon "$ceph_health")]\n" "${ceph_health:-unknown}"
+  printf "  | Image:    %s\n" "${ceph_version:-unknown}"
+  printf "  | Mons:     count=%-3s external=%s\n" "${ceph_mon_count:-?}" "${ceph_ext_mons:-none}"
+  if [[ -n "$ceph_mon_list" ]]; then
+    printf "  | Quorum:   %s\n" "$ceph_mon_list"
+    printf "  | Leader:   %s\n" "${ceph_leader:-unknown}"
+  fi
+  printf "  |\n"
+
+  # --- Rook Mon Deployments ---
+  printf "  | ${BOLD}Rook Mon Deployments:${RESET}\n"
+  if [[ -n "$rook_mons" ]]; then
+    while IFS= read -r line; do
+      local mon_name mon_ready
+      mon_name=$(echo "$line" | awk '{print $1}')
+      mon_ready=$(echo "$line" | awk '{print $2}')
+      local ready_num
+      ready_num=$(echo "$mon_ready" | cut -d/ -f1)
+      if [[ "$ready_num" -ge 1 ]] 2>/dev/null; then
+        printf "  |   %-35s %s [$(ok)]\n" "$mon_name" "$mon_ready"
+      else
+        printf "  |   %-35s %s [$(err)]\n" "$mon_name" "$mon_ready"
+      fi
+    done <<< "$rook_mons"
+  else
+    printf "  |   ${DIM}(none found)${RESET}\n"
+  fi
+  printf "  |\n"
+
+  # --- RGW (Object Store) ---
+  if [[ -n "$rgw_store_name" ]]; then
+    printf "  | ${BOLD}RGW Object Store:${RESET}\n"
+    printf "  |   Store:    %-20s [$(status_icon "$rgw_store_phase")]\n" "${rgw_store_name}"
+    printf "  |   Phase:    %s\n" "${rgw_store_phase:-unknown}"
+    if [[ -n "$rgw_endpoint" ]]; then
+      printf "  |   Endpoint: http://%s\n" "$rgw_endpoint"
+    fi
+    if [[ -n "$rgw_deploy_info" ]]; then
+      while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        local rgw_dep_name rgw_dep_ready
+        rgw_dep_name=$(echo "$line" | awk '{print $1}')
+        rgw_dep_ready=$(echo "$line" | awk '{print $2}')
+        local rgw_ready_num
+        rgw_ready_num=$(echo "$rgw_dep_ready" | cut -d/ -f1)
+        if [[ "${rgw_ready_num:-0}" -ge 1 ]] 2>/dev/null; then
+          printf "  |   %-35s %s [$(ok)]\n" "$rgw_dep_name" "$rgw_dep_ready"
+        else
+          printf "  |   %-35s %s [$(err)]\n" "$rgw_dep_name" "$rgw_dep_ready"
+        fi
+      done <<< "$rgw_deploy_info"
+    fi
+    printf "  |\n"
+  fi
+
+  # --- Connection line ---
+  printf "  |         msgr2 :3300  ${DIM}(v2 protocol, encrypted, preferred)${RESET}\n"
+  printf "  |         msgr1 :6789  ${DIM}(v1 legacy, unencrypted, fallback)${RESET}\n"
+  printf "  |             |\n"
+  printf "  |             |  ${DIM}(cross-cluster)${RESET}\n"
+  printf "  |             |\n"
+
+  # --- RemoteCluster ---
+  printf "  | ${BOLD}${YELLOW}+------------------------------------------+${RESET}\n"
+  printf "  | ${BOLD}${YELLOW}|    REMOTE CLUSTER: %-21s |${RESET}\n" "${rc_name:-inline}"
+  printf "  | ${BOLD}${YELLOW}|    Namespace:      %-21s |${RESET}\n" "${rc_ns:-unknown}"
+  printf "  | ${BOLD}${YELLOW}+------------------------------------------+${RESET}\n"
+  printf "  | | State:  %-20s [$(status_icon "$rc_state")]\n" "${rc_state:-unknown}"
+  printf "  | | Message: %s\n" "${rc_msg:-}"
+
+  if [[ -n "$rc_conditions" ]]; then
+    printf "  | |\n"
+    printf "  | | ${BOLD}Conditions:${RESET}\n"
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      local ctype cstatus cmsg
+      ctype=$(echo "$line" | awk '{print $1}')
+      cstatus=$(echo "$line" | awk '{print $2}')
+      cmsg=$(echo "$line" | awk '{$1=""; $2=""; print}' | sed 's/^ *//')
+      printf "  | |   %-28s [$(status_icon "$cstatus")] %s\n" "$ctype" "$cmsg"
+    done <<< "$rc_conditions"
+  fi
+  printf "  | |\n"
+
+  # --- Arbiter Deployment ---
+  printf "  | | ${BOLD}${GREEN}+--------------------------------------+${RESET}\n"
+  printf "  | | ${BOLD}${GREEN}|    ARBITER DEPLOYMENT                |${RESET}\n"
+  printf "  | | ${BOLD}${GREEN}+--------------------------------------+${RESET}\n"
+  if [[ -n "$arbiter_deploy_info" ]]; then
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      local dep_name dep_ready dep_image
+      dep_name=$(echo "$line" | awk '{print $1}')
+      dep_ready=$(echo "$line" | awk '{print $2}')
+      dep_image=$(echo "$line" | awk '{print $3}')
+      local dep_ready_num
+      dep_ready_num=$(echo "$dep_ready" | cut -d/ -f1)
+      if [[ "$dep_ready_num" -ge 1 ]] 2>/dev/null; then
+        printf "  | | | Name:   %-28s [$(ok)]\n" "$dep_name"
+      else
+        printf "  | | | Name:   %-28s [$(err)]\n" "$dep_name"
+      fi
+      printf "  | | | Ready:  %s\n" "$dep_ready"
+      printf "  | | | Image:  %s\n" "${dep_image:-unknown}"
+      printf "  | | | Mon ID: %s\n" "${ra_monid:-unassigned}"
+    done <<< "$arbiter_deploy_info"
+  else
+    printf "  | | | ${DIM}(not found on remote cluster)${RESET}\n"
+  fi
+
+  # --- Arbiter Service ---
+  if [[ -n "$arbiter_svc_info" ]]; then
+    printf "  | | |\n"
+    printf "  | | | ${BOLD}Service:${RESET}\n"
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      local svc_name svc_type svc_ip
+      svc_name=$(echo "$line" | awk '{print $1}')
+      svc_type=$(echo "$line" | awk '{print $2}')
+      svc_ip=$(echo "$line" | awk '{print $3}')
+      printf "  | | |   %-20s %s  IP: %s\n" "$svc_name" "$svc_type" "${svc_ip:-pending}"
+    done <<< "$arbiter_svc_info"
+  elif [[ -n "$ra_svc_type" ]]; then
+    printf "  | | |\n"
+    printf "  | | | ${BOLD}Service:${RESET} ${YELLOW}configured (type=%s) but not found${RESET}\n" "$ra_svc_type"
+  else
+    printf "  | | |\n"
+    printf "  | | | ${DIM}Service: not configured (using pod IP)${RESET}\n"
+  fi
+
+  printf "  | | ${BOLD}${GREEN}+--------------------------------------+${RESET}\n"
+  printf "  | ${BOLD}${YELLOW}+------------------------------------------+${RESET}\n"
+  printf "${BOLD}${CYAN}  +----------------------------------------------+${RESET}\n"
+  printf "\n"
+
+  # --- RemoteArbiter CR Status ---
+  printf "${BOLD}  RemoteArbiter CR: %s/%s${RESET}\n" "$OP_NAMESPACE" "$ARBITER_NAME"
+  printf "  State:   %-15s [$(status_icon "$ra_state")]\n" "${ra_state:-unknown}"
+  printf "  Message: %s\n" "${ra_msg:-}"
+  printf "  Mon ID:  %s\n" "${ra_monid:-unassigned}"
+  printf "\n"
+
+  if [[ -n "$ra_conditions" ]]; then
+    printf "${BOLD}  Reconcile Conditions:${RESET}\n"
+    printf "  %-32s %-8s %s\n" "TYPE" "STATUS" "MESSAGE"
+    printf "  %-32s %-8s %s\n" "--------------------------------" "--------" "--------------------"
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      local ctype cstatus cmsg
+      ctype=$(echo "$line" | awk '{print $1}')
+      cstatus=$(echo "$line" | awk '{print $2}')
+      cmsg=$(echo "$line" | awk '{$1=""; $2=""; print}' | sed 's/^ *//')
+      printf "  %-32s [$(status_icon "$cstatus")]%-4s %s\n" "$ctype" "" "$cmsg"
+    done <<< "$ra_conditions"
+    printf "\n"
+  fi
+
+  # --- Quorum health assessment ---
+  printf "${BOLD}  Quorum Assessment:${RESET}\n"
+  if [[ -n "$ceph_mon_list" || -n "$ceph_monmap_count" ]]; then
+    # --- Ceph-sourced quorum data available ---
+    local quorum_count total_mons majority monmap_known=true
+    quorum_count=$(printf '%s\n' "$ceph_mon_list" | tr ',' '\n' | { grep -c . || true; })
+
+    if [[ -n "$ceph_monmap_count" ]]; then
+      total_mons="$ceph_monmap_count"
+    else
+      # monmap was not parsed; total is unknown -- do not fall back to
+      # quorum_count, which would make every quorum look fully healthy
+      total_mons="$quorum_count"
+      monmap_known=false
+    fi
+    majority=$(( (total_mons / 2) + 1 ))
+
+    if [[ "$monmap_known" == "true" ]]; then
+      printf "  Monmap:          %s mons (%s)\n" "$total_mons" "${ceph_monmap_names:-unknown}"
+    else
+      printf "  Monmap:          ${YELLOW}unknown${RESET} (monmap parse failed, showing quorum only)\n"
+    fi
+    printf "  In quorum:       %s (%s)\n" "$quorum_count" "${ceph_mon_list:-none}"
+    printf "  Leader:          %s\n" "${ceph_leader:-unknown}"
+
+    if [[ "$monmap_known" != "true" ]]; then
+      printf "  Status:          [$(warn)]  Monmap unavailable - cannot determine full cluster health\n"
+      printf "  ${DIM}                   %d mons visible in quorum; total may be higher${RESET}\n" \
+        "$quorum_count"
+    elif [[ "$quorum_count" -lt "$majority" ]]; then
+      printf "  Status:          [$(err)]  ${RED}QUORUM LOST${RESET} (need %d/%d, have %d)\n" \
+        "$majority" "$total_mons" "$quorum_count"
+    elif [[ "$quorum_count" -eq "$total_mons" && "$total_mons" -ge 3 ]]; then
+      printf "  Status:          [$(ok)]  Fault tolerant (can lose %d mon)\n" \
+        "$(( (total_mons - 1) / 2 ))"
+    elif [[ "$quorum_count" -eq "$total_mons" && "$total_mons" -eq 2 ]]; then
+      printf "  Status:          [$(warn)]  No fault tolerance (need 3+ mons for resilience)\n"
+    elif [[ "$quorum_count" -eq "$total_mons" && "$total_mons" -eq 1 ]]; then
+      printf "  Status:          [$(err)]  Single mon - no redundancy\n"
+    else
+      printf "  Status:          [$(warn)]  Degraded (%d/%d mons in quorum)\n" \
+        "$quorum_count" "$total_mons"
+    fi
+
+    # check if arbiter mon is in quorum
+    if [[ -n "$ra_monid" ]]; then
+      if echo "$ceph_mon_list" | tr ',' '\n' | grep -qF "$ra_monid"; then
+        printf "  Arbiter (%s):  [$(ok)]  In quorum\n" "$ra_monid"
+      else
+        if echo "$ceph_monmap_names" | tr ',' '\n' | grep -qF "$ra_monid"; then
+          printf "  Arbiter (%s):  [$(err)]  In monmap but NOT in quorum\n" "$ra_monid"
+        else
+          printf "  Arbiter (%s):  [$(err)]  NOT in monmap or quorum\n" "$ra_monid"
+        fi
+      fi
+    fi
+  else
+    # --- Ceph unreachable: Kubernetes-level fallback assessment ---
+    printf "  ${YELLOW}[WARN]  Ceph cluster unreachable (quorum likely lost, cluster is read-only)${RESET}\n"
+    printf "\n"
+    printf "  ${BOLD}Expected mons (from Kubernetes):${RESET}\n"
+
+    local k8s_total_mons=0 k8s_ready_mons=0
+
+    # Rook-managed mons
+    if [[ -n "$rook_mon_details" ]]; then
+      while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        local mon_id mon_ready mon_total
+        mon_id=$(echo "$line" | awk '{print $1}')
+        mon_ready=$(echo "$line" | awk '{print $2}')
+        mon_total=$(echo "$line" | awk '{print $3}')
+        k8s_total_mons=$((k8s_total_mons + 1))
+        if [[ "${mon_ready:-0}" -ge 1 ]] 2>/dev/null; then
+          k8s_ready_mons=$((k8s_ready_mons + 1))
+          printf "    mon-%-10s (rook)      %s/%s ready  [$(ok)]\n" "$mon_id" "${mon_ready:-0}" "${mon_total:-1}"
+        else
+          printf "    mon-%-10s (rook)      %s/%s ready  [$(err)]\n" "$mon_id" "${mon_ready:-0}" "${mon_total:-1}"
+        fi
+      done <<< "$rook_mon_details"
+    fi
+
+    # External arbiter mons
+    if [[ -n "$ra_monid" ]]; then
+      k8s_total_mons=$((k8s_total_mons + 1))
+      local arbiter_ready_num=0
+      if [[ -n "$arbiter_deploy_info" ]]; then
+        arbiter_ready_num=$(echo "$arbiter_deploy_info" | head -1 | awk '{print $2}' | cut -d/ -f1)
+        arbiter_ready_num=${arbiter_ready_num:-0}
+      fi
+      if [[ "$arbiter_ready_num" -ge 1 ]] 2>/dev/null; then
+        k8s_ready_mons=$((k8s_ready_mons + 1))
+        local arbiter_total
+        arbiter_total=$(echo "$arbiter_deploy_info" | head -1 | awk '{print $2}' | cut -d/ -f2)
+        printf "    %-14s (external)  %s/%s ready  [$(ok)]\n" "$ra_monid" "$arbiter_ready_num" "${arbiter_total:-1}"
+      else
+        printf "    %-14s (external)  0/1 ready  [$(err)]\n" "$ra_monid"
+      fi
+    fi
+
+    printf "\n"
+    if [[ "$k8s_total_mons" -gt 0 ]]; then
+      local k8s_majority=$(( (k8s_total_mons / 2) + 1 ))
+      printf "  Availability:    %d/%d mons ready (need %d/%d for quorum)\n" \
+        "$k8s_ready_mons" "$k8s_total_mons" "$k8s_majority" "$k8s_total_mons"
+      if [[ "$k8s_ready_mons" -lt "$k8s_majority" ]]; then
+        printf "  Assessment:      [$(err)]  ${RED}QUORUM LOST${RESET} (%d/%d ready, need %d)\n" \
+          "$k8s_ready_mons" "$k8s_total_mons" "$k8s_majority"
+      elif [[ "$k8s_ready_mons" -eq "$k8s_total_mons" ]]; then
+        printf "  Assessment:      [$(warn)]  All mons ready but Ceph unreachable - may be recovering\n"
+      else
+        printf "  Assessment:      [$(warn)]  Degraded (%d/%d ready), Ceph may be recovering\n" \
+          "$k8s_ready_mons" "$k8s_total_mons"
+      fi
+    else
+      printf "  ${DIM}No mon deployments found${RESET}\n"
+    fi
+  fi
+
+  printf "\n"
+  printf "${DIM}  Legend: ${GREEN}OK${RESET}${DIM}=healthy  ${YELLOW}WARN${RESET}${DIM}=degraded  ${RED}ERROR${RESET}${DIM}=failed  ${DIM}N/A${RESET}${DIM}=unknown${RESET}\n"
+  printf "${DIM}  Protocols: msgr2=v2 wire protocol (encrypted, compressed, port 3300)${RESET}\n"
+  printf "${DIM}             msgr1=v1 legacy protocol (unencrypted, port 6789)${RESET}\n\n"
+}
+
+# --- main ---
+cleanup() {
+  # Remove auto-extracted remote kubeconfig temp file (skip if user-supplied)
+  if [[ -n "$RESOLVED_REMOTE_KUBECONFIG" && "$RESOLVED_REMOTE_KUBECONFIG" != "$REMOTE_KUBECONFIG" ]]; then
+    rm -f "$RESOLVED_REMOTE_KUBECONFIG"
+  fi
+}
+
+if [[ "$WATCH" == "true" ]]; then
+  tput civis 2>/dev/null || true
+  trap 'cleanup; tput cnorm 2>/dev/null || true; exit 0' INT TERM EXIT
+  while true; do
+    output=$(render 2>&1) || true
+    clear
+    printf '%s\n' "$output"
+    sleep 5
+  done
+else
+  trap 'cleanup' EXIT
+  render
+fi

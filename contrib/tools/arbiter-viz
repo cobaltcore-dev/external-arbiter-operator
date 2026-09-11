@@ -1,0 +1,369 @@
+#!/usr/bin/env bash
+# Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# arbiter-viz - Visualize external arbiter Ceph monitor traffic via Hubble
+#
+# Usage:
+#   arbiter-viz [options]
+#
+# Options:
+#   -n, --namespace <ns>    Arbiter namespace (default: external-arbiter)
+#   -l, --label <label>     Pod selector label (default: ceph.cobaltcore.sap.com/lookup)
+#   -a, --arbiter <name>    Arbiter name for label value (default: auto-detect)
+#   -c, --count <N>         Number of recent flows to fetch (default: 100)
+#   -f, --follow            Follow mode (stream until Ctrl+C)
+#   --lima <vm>             Run hubble via limactl shell <vm>
+#   -h, --help              Show this help
+#
+set -euo pipefail
+
+# --- defaults ---
+NAMESPACE="external-arbiter"
+LABEL_KEY="ceph.cobaltcore.sap.com/lookup"
+ARBITER_NAME=""
+FLOW_LIMIT=100
+FOLLOW=false
+LIMA_VM=""
+
+usage() {
+  sed -n '8,18p' "$0" | sed 's/^# \?//'
+  exit 0
+}
+
+# --- parse args ---
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -n|--namespace)  NAMESPACE="$2"; shift 2 ;;
+    -l|--label)      LABEL_KEY="$2"; shift 2 ;;
+    -a|--arbiter)    ARBITER_NAME="$2"; shift 2 ;;
+    -c|--count)      FLOW_LIMIT="$2"; shift 2 ;;
+    -f|--follow)     FOLLOW=true; shift ;;
+    --lima)          LIMA_VM="$2"; shift 2 ;;
+    -h|--help)       usage ;;
+    *)               echo "Unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+
+run_hubble() {
+  if [[ -n "$LIMA_VM" ]]; then
+    limactl shell "$LIMA_VM" hubble "$@"
+  else
+    hubble "$@"
+  fi
+}
+
+# --- auto-detect arbiter name if not specified ---
+if [[ -z "$ARBITER_NAME" ]]; then
+  ARBITER_NAME=$(kubectl get remotearbiter -A -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+  if [[ -z "$ARBITER_NAME" ]]; then
+    echo "Error: Could not auto-detect arbiter name. Use -a <name>." >&2
+    exit 1
+  fi
+  echo "Auto-detected arbiter: $ARBITER_NAME"
+fi
+
+LABEL_SELECTOR="${LABEL_KEY}=${ARBITER_NAME}"
+
+# --- collect flows ---
+echo "Fetching last ${FLOW_LIMIT} flows (namespace=${NAMESPACE}, label=${LABEL_SELECTOR})..."
+echo ""
+
+TMPFILE=$(mktemp)
+trap 'rm -f "$TMPFILE"' EXIT
+
+if [[ "$FOLLOW" == "true" ]]; then
+  # Stream both directions concurrently to capture bidirectional traffic
+  run_hubble observe \
+    --namespace "$NAMESPACE" \
+    --to-label "$LABEL_SELECTOR" \
+    -o json \
+    --follow 2>/dev/null &
+  to_pid=$!
+
+  run_hubble observe \
+    --namespace "$NAMESPACE" \
+    --from-label "$LABEL_SELECTOR" \
+    -o json \
+    --follow 2>/dev/null &
+  from_pid=$!
+
+  trap 'kill $to_pid $from_pid 2>/dev/null; rm -f "$TMPFILE"; exit 0' INT TERM EXIT
+  wait
+  exit 0
+fi
+
+# Collect bidirectional flows: to and from the arbiter
+{
+  run_hubble observe \
+    --namespace "$NAMESPACE" \
+    --to-label "$LABEL_SELECTOR" \
+    --last "$FLOW_LIMIT" \
+    -o json 2>/dev/null || true
+
+  run_hubble observe \
+    --namespace "$NAMESPACE" \
+    --from-label "$LABEL_SELECTOR" \
+    --last "$FLOW_LIMIT" \
+    -o json 2>/dev/null || true
+} > "$TMPFILE"
+
+FLOW_COUNT=$(wc -l < "$TMPFILE" | tr -d ' ')
+if [[ "$FLOW_COUNT" -eq 0 ]]; then
+  echo "No flows captured. Ensure Hubble relay is running and port-forwarded."
+  echo "  hubble status"
+  echo "  cilium hubble port-forward &"
+  exit 1
+fi
+
+# --- parse and render ---
+# Pass a quote character to awk via -v to avoid regex escape issues on BSD/macOS
+awk -v Q='"' '
+BEGIN {
+  RESET  = "\033[0m"
+  BOLD   = "\033[1m"
+  GREEN  = "\033[32m"
+  RED    = "\033[31m"
+  YELLOW = "\033[33m"
+  CYAN   = "\033[36m"
+  DIM    = "\033[2m"
+
+  total_flows = 0
+  forwarded = 0
+  dropped = 0
+}
+
+# Extract a simple JSON string value: "key":"value"
+# Uses index() and substr() to avoid regex with embedded quotes
+function extract(line, key,    needle, pos, rest, vstart, vend, val) {
+  needle = Q key Q ":" Q
+  pos = index(line, needle)
+  if (pos == 0) return ""
+  rest = substr(line, pos + length(needle))
+  vend = index(rest, Q)
+  if (vend == 0) return ""
+  return substr(rest, 1, vend - 1)
+}
+
+# Extract a JSON string value nested inside an object: "outer":{..."key":"value"...}
+function extract_nested(line, outer, key,    needle, pos, rest, brace, depth, i, ch, block) {
+  needle = Q outer Q ":{"
+  pos = index(line, needle)
+  if (pos == 0) return ""
+  rest = substr(line, pos + length(needle) - 1)
+  # find matching closing brace
+  depth = 0
+  block = ""
+  for (i = 1; i <= length(rest); i++) {
+    ch = substr(rest, i, 1)
+    if (ch == "{") depth++
+    else if (ch == "}") depth--
+    block = block ch
+    if (depth == 0) break
+  }
+  return extract(block, key)
+}
+
+# Extract destination port from l4 section. Tries "destination_port" first, then "port".
+function extract_port(line, section,    needle, pos, rest, pneedle, ppos, prest, val, i, ch) {
+  needle = Q section Q ":{"
+  pos = index(line, needle)
+  if (pos == 0) return ""
+  rest = substr(line, pos + length(needle))
+  # try destination_port first (hubble v1+), then port
+  pneedle = Q "destination_port" Q ":"
+  ppos = index(rest, pneedle)
+  if (ppos == 0) {
+    pneedle = Q "port" Q ":"
+    ppos = index(rest, pneedle)
+  }
+  if (ppos == 0) return ""
+  prest = substr(rest, ppos + length(pneedle))
+  val = ""
+  for (i = 1; i <= length(prest); i++) {
+    ch = substr(prest, i, 1)
+    if (ch >= "0" && ch <= "9") val = val ch
+    else break
+  }
+  return val
+}
+
+{
+  line = $0
+  total_flows++
+
+  verdict = extract(line, "verdict")
+  if (verdict == "FORWARDED") forwarded++
+  else if (verdict == "DROPPED") dropped++
+
+  src_ns    = extract_nested(line, "source", "namespace")
+  src_name  = extract_nested(line, "source", "pod_name")
+  dst_ns    = extract_nested(line, "destination", "namespace")
+  dst_name  = extract_nested(line, "destination", "pod_name")
+  dst_port  = extract_port(line, "l4")
+
+  if (src_name == "" && src_ns == "") src_label = "(external)"
+  else src_label = src_ns "/" src_name
+
+  if (dst_name == "" && dst_ns == "") dst_label = "(external)"
+  else dst_label = dst_ns "/" dst_name
+
+  port_info = ""
+  if (dst_port != "" && dst_port != "0") port_info = ":" dst_port
+
+  edge = src_label "|" dst_label "|" port_info "|" verdict
+  edge_count[edge]++
+  edges[edge] = 1
+
+  nodes[src_label] = 1
+  nodes[dst_label] = 1
+
+  if (port_info != "") {
+    port_stats[port_info]++
+    if (dst_port == "6789") port_names[port_info] = "msgr1"
+    else if (dst_port == "3300") port_names[port_info] = "msgr2"
+  }
+}
+
+END {
+  printf "\n"
+  printf BOLD "  Arbiter Traffic Topology" RESET "\n"
+  printf "  ========================\n\n"
+
+  printf BOLD "  Summary" RESET "\n"
+  printf "  Flows captured : %d\n", total_flows
+  printf "  Forwarded      : " GREEN "%d" RESET "\n", forwarded
+  if (dropped > 0)
+    printf "  Dropped        : " RED "%d" RESET "\n", dropped
+  else
+    printf "  Dropped        : %d\n", dropped
+  printf "\n"
+
+  printf BOLD "  Port Breakdown" RESET "\n"
+  for (p in port_stats) {
+    pname = ""
+    if (p in port_names) pname = " (" port_names[p] ")"
+    printf "  %-8s %5d flows%s\n", p, port_stats[p], pname
+  }
+  printf "\n"
+
+  printf BOLD "  Traffic Flow" RESET "\n"
+  printf "  %-45s  %5s  %-7s  %s\n", "Source", "Count", "Verdict", "Destination"
+  printf "  %-45s  %5s  %-7s  %s\n", \
+    "---------------------------------------------", "-----", "-------", \
+    "---------------------------------------------"
+
+  n = 0
+  for (e in edges) { sorted[n] = e; n++ }
+  for (i = 0; i < n-1; i++) {
+    for (j = i+1; j < n; j++) {
+      if (edge_count[sorted[j]] > edge_count[sorted[i]]) {
+        tmp = sorted[i]; sorted[i] = sorted[j]; sorted[j] = tmp
+      }
+    }
+  }
+
+  for (i = 0; i < n; i++) {
+    e = sorted[i]
+    split(e, parts, "|")
+    src = parts[1]; dst = parts[2]; port = parts[3]; verd = parts[4]
+    cnt = edge_count[e]
+
+    if (verd == "FORWARDED") vcolor = GREEN
+    else if (verd == "DROPPED") vcolor = RED
+    else vcolor = YELLOW
+
+    dst_display = dst
+    if (port != "") dst_display = dst port
+
+    printf "  %-45s  %5d  " vcolor "%-7s" RESET "  %s\n", src, cnt, verd, dst_display
+  }
+
+  # --- ASCII Diagram ---
+  printf "\n"
+  printf BOLD "  Connection Diagram" RESET "\n\n"
+
+  arbiter = ""
+  for (nd in nodes) {
+    if (index(nd, "arbiter") > 0 || index(nd, "ext-") > 0) {
+      arbiter = nd; break
+    }
+  }
+  if (arbiter == "") arbiter = "(arbiter)"
+
+  # truncate arbiter name for the box
+  aname = arbiter
+  if (length(aname) > 38) aname = substr(aname, 1, 35) "..."
+
+  mon_count = 0
+  for (nd in nodes) {
+    if (nd == arbiter) continue
+    if (index(nd, "mon") > 0 || index(nd, "rook-ceph") > 0) {
+      mons[mon_count] = nd; mon_count++
+    }
+  }
+
+  other_count = 0
+  for (nd in nodes) {
+    if (nd == arbiter) continue
+    is_mon = 0
+    for (m = 0; m < mon_count; m++) {
+      if (mons[m] == nd) { is_mon = 1; break }
+    }
+    if (!is_mon) { others[other_count] = nd; other_count++ }
+  }
+
+  # box width adapts to arbiter name
+  bw = length(aname) + 6
+  if (bw < 24) bw = 24
+  border = "+"
+  for (i = 0; i < bw - 2; i++) border = border "-"
+  border = border "+"
+
+  title = "EXTERNAL ARBITER"
+  tpad = int((bw - 4 - length(title)) / 2)
+  if (tpad < 0) tpad = 0
+  npad = int((bw - 4 - length(aname)) / 2)
+  if (npad < 0) npad = 0
+
+  indent = "      "
+  printf CYAN
+  printf "%s%s\n", indent, border
+  printf "%s| %" tpad "s%-" (bw - 4 - tpad) "s |\n", indent, "", title
+  printf "%s| %" npad "s%-" (bw - 4 - npad) "s |\n", indent, "", aname
+  printf "%s%s\n", indent, border
+  printf RESET
+
+  if (mon_count > 0 || other_count > 0) {
+    printf "%s%s\n", indent, "|"
+    printf "%s%s\n", indent, "| msgr2 :3300"
+    printf "%s%s\n", indent, "| msgr1 :6789"
+    printf "%s%s\n", indent, "|"
+
+    for (m = 0; m < mon_count; m++) {
+      # count total flows for this mon<->arbiter pair
+      fcnt = 0
+      for (e in edges) {
+        split(e, parts, "|")
+        if ((parts[1] == mons[m] || parts[2] == mons[m]) && \
+            (parts[1] == arbiter || parts[2] == arbiter)) {
+          fcnt += edge_count[e]
+        }
+      }
+      printf GREEN
+      printf "%s+-- %-40s [%d flows]\n", indent, mons[m], fcnt
+      printf RESET
+    }
+
+    for (o = 0; o < other_count; o++) {
+      printf YELLOW
+      printf "%s+-- %s\n", indent, others[o]
+      printf RESET
+    }
+  }
+
+  printf "\n"
+  printf DIM "  Legend: " GREEN "green" RESET DIM "=forwarded " RED "red" RESET DIM "=dropped " YELLOW "yellow" RESET DIM "=other" RESET "\n"
+  printf DIM "  Ports: 6789=msgr1 (legacy), 3300=msgr2 (v2 protocol)" RESET "\n\n"
+}
+' "$TMPFILE"

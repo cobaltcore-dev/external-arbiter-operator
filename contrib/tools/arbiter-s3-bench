@@ -1,0 +1,370 @@
+#!/usr/bin/env bash
+# Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# arbiter-s3-bench - Generate S3 read/write traffic against Ceph RGW
+#
+# Usage:
+#   arbiter-s3-bench [options]
+#
+# Options:
+#   -n, --num-objects <N>      Number of objects per cycle (default: 50)
+#   -s, --object-size <bytes>  Object size in bytes (default: 4096)
+#   -b, --bucket <name>        Bucket name (default: arbiter-test)
+#   --read-only                Only read existing objects
+#   --write-only               Only write objects (skip reads)
+#   --verify                   Verify data integrity on read-back
+#   --loop                     Repeat continuously until Ctrl+C
+#   --cleanup                  Delete bucket and objects after bench
+#   --ceph-ns <ns>             Rook-Ceph namespace (default: rook-ceph)
+#   --store <name>             CephObjectStore name (default: my-store)
+#   --user <name>              CephObjectStoreUser name (default: test-user)
+#   -h, --help                 Show this help
+#
+set -euo pipefail
+
+# --- defaults ---
+NUM_OBJECTS=50
+OBJECT_SIZE=4096
+BUCKET="arbiter-test"
+READ_ONLY=false
+WRITE_ONLY=false
+VERIFY=false
+LOOP=false
+CLEANUP=false
+CEPH_NS="rook-ceph"
+STORE_NAME="my-store"
+USER_NAME="test-user"
+
+# --- error counts (set by write_objects, read_objects, run_cycle) ---
+WRITE_ERRORS=0
+READ_ERRORS=0
+CYCLE_ERRORS=0
+
+# --- colors ---
+RESET="\033[0m"
+BOLD="\033[1m"
+GREEN="\033[32m"
+RED="\033[31m"
+YELLOW="\033[33m"
+DIM="\033[2m"
+
+usage() {
+  sed -n '8,24p' "$0" | sed 's/^# \?//'
+  exit 0
+}
+
+# --- parse args ---
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -n|--num-objects)  NUM_OBJECTS="$2"; shift 2 ;;
+    -s|--object-size)  OBJECT_SIZE="$2"; shift 2 ;;
+    -b|--bucket)       BUCKET="$2"; shift 2 ;;
+    --read-only)       READ_ONLY=true; shift ;;
+    --write-only)      WRITE_ONLY=true; shift ;;
+    --verify)          VERIFY=true; shift ;;
+    --loop)            LOOP=true; shift ;;
+    --cleanup)         CLEANUP=true; shift ;;
+    --ceph-ns)         CEPH_NS="$2"; shift 2 ;;
+    --store)           STORE_NAME="$2"; shift 2 ;;
+    --user)            USER_NAME="$2"; shift 2 ;;
+    -h|--help)         usage ;;
+    *)                 echo "Unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+
+if [[ "$READ_ONLY" == "true" && "$WRITE_ONLY" == "true" ]]; then
+  echo "Error: --read-only and --write-only are mutually exclusive." >&2
+  exit 2
+fi
+
+if [[ "$VERIFY" == "true" && ( "$READ_ONLY" == "true" || "$WRITE_ONLY" == "true" ) ]]; then
+  echo "Error: --verify requires both write and read phases." >&2
+  exit 2
+fi
+
+# --- check dependencies ---
+if ! command -v aws >/dev/null 2>&1; then
+  echo "Error: aws CLI not found. Install with: apt-get install -y awscli" >&2
+  exit 1
+fi
+if ! command -v kubectl >/dev/null 2>&1; then
+  echo "Error: kubectl not found." >&2
+  exit 1
+fi
+
+# --- fetch S3 credentials from Rook secret ---
+SECRET_NAME="rook-ceph-object-user-${STORE_NAME}-${USER_NAME}"
+printf "${BOLD}Fetching S3 credentials from secret %s...${RESET}\n" "$SECRET_NAME"
+
+AWS_ACCESS_KEY_ID=$(kubectl get secret "$SECRET_NAME" -n "$CEPH_NS" \
+  -o jsonpath='{.data.AccessKey}' 2>/dev/null | base64 -d) || true
+AWS_SECRET_ACCESS_KEY=$(kubectl get secret "$SECRET_NAME" -n "$CEPH_NS" \
+  -o jsonpath='{.data.SecretKey}' 2>/dev/null | base64 -d) || true
+
+if [[ -z "$AWS_ACCESS_KEY_ID" || -z "$AWS_SECRET_ACCESS_KEY" ]]; then
+  echo "Error: Could not fetch S3 credentials from secret $SECRET_NAME" >&2
+  echo "Ensure the CephObjectStore and CephObjectStoreUser are deployed:" >&2
+  echo "  kubectl apply -f contrib/k8s/examples/object-store.yaml" >&2
+  echo "  kubectl apply -f contrib/k8s/examples/object-store-user.yaml" >&2
+  exit 1
+fi
+
+export AWS_ACCESS_KEY_ID
+export AWS_SECRET_ACCESS_KEY
+
+# --- determine RGW endpoint ---
+RGW_SVC="rook-ceph-rgw-${STORE_NAME}"
+RGW_IP=$(kubectl get svc "$RGW_SVC" -n "$CEPH_NS" \
+  -o jsonpath='{.spec.clusterIP}' 2>/dev/null) || true
+RGW_PORT=$(kubectl get svc "$RGW_SVC" -n "$CEPH_NS" \
+  -o jsonpath='{.spec.ports[0].port}' 2>/dev/null) || true
+
+if [[ -z "$RGW_IP" || -z "$RGW_PORT" ]]; then
+  echo "Error: Could not find RGW service $RGW_SVC in namespace $CEPH_NS" >&2
+  echo "Ensure the CephObjectStore is deployed and ready:" >&2
+  echo "  kubectl get cephobjectstore -n $CEPH_NS" >&2
+  exit 1
+fi
+
+S3_ENDPOINT="http://${RGW_IP}:${RGW_PORT}"
+printf "${BOLD}RGW endpoint: %s${RESET}\n" "$S3_ENDPOINT"
+
+# --- aws CLI wrapper ---
+s3() {
+  aws --endpoint-url "$S3_ENDPOINT" --no-verify-ssl s3 "$@" 2>&1 \
+    | grep -v "InsecureRequestWarning" || true
+}
+
+s3api() {
+  aws --endpoint-url "$S3_ENDPOINT" --no-verify-ssl s3api "$@" 2>&1 \
+    | grep -v "InsecureRequestWarning" || true
+}
+
+# --- helper functions ---
+now_ms() {
+  # Use nanoseconds if available, fall back to seconds with 000
+  if date +%s%N >/dev/null 2>&1; then
+    date +%s%N | cut -b1-13
+  else
+    echo "$(date +%s)000"
+  fi
+}
+
+human_size() {
+  local bytes=$1
+  if [[ "$bytes" -ge 1048576 ]]; then
+    echo "$((bytes / 1048576)) MiB"
+  elif [[ "$bytes" -ge 1024 ]]; then
+    echo "$((bytes / 1024)) KiB"
+  else
+    echo "${bytes} B"
+  fi
+}
+
+# --- create temp dir for test data ---
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+# --- generate test data ---
+generate_objects() {
+  printf "${DIM}Generating %d test objects (%s each)...${RESET}\n" "$NUM_OBJECTS" "$(human_size "$OBJECT_SIZE")"
+  for i in $(seq 1 "$NUM_OBJECTS"); do
+    dd if=/dev/urandom bs="$OBJECT_SIZE" count=1 2>/dev/null > "${TMPDIR}/obj-${i}"
+    if [[ "$VERIFY" == "true" ]]; then
+      sha256sum "${TMPDIR}/obj-${i}" | awk '{print $1}' > "${TMPDIR}/obj-${i}.sha256"
+    fi
+  done
+}
+
+# --- ensure bucket exists ---
+ensure_bucket() {
+  if aws --endpoint-url "$S3_ENDPOINT" --no-verify-ssl \
+    s3api head-bucket --bucket "$BUCKET" >/dev/null 2>&1; then
+    printf "Bucket exists: %s\n" "$BUCKET"
+  else
+    printf "Creating bucket: %s\n" "$BUCKET"
+    if ! aws --endpoint-url "$S3_ENDPOINT" --no-verify-ssl \
+      s3 mb "s3://${BUCKET}"; then
+      return 1
+    fi
+  fi
+}
+
+# --- write objects ---
+write_objects() {
+  local start end duration ops_sec errors=0
+  printf "\n${BOLD}${GREEN}--- WRITE ---${RESET}\n"
+  printf "Uploading %d objects to s3://%s/...\n" "$NUM_OBJECTS" "$BUCKET"
+
+  start=$(now_ms)
+  for i in $(seq 1 "$NUM_OBJECTS"); do
+    if ! aws --endpoint-url "$S3_ENDPOINT" --no-verify-ssl \
+      s3 cp "${TMPDIR}/obj-${i}" "s3://${BUCKET}/obj-${i}" >/dev/null 2>&1; then
+      errors=$((errors + 1))
+      printf "${RED}  FAIL: obj-%d${RESET}\n" "$i"
+    fi
+  done
+  end=$(now_ms)
+
+  duration=$(( end - start ))
+  if [[ "$duration" -gt 0 ]]; then
+    ops_sec=$(( (NUM_OBJECTS - errors) * 1000 / duration ))
+  else
+    ops_sec="$((NUM_OBJECTS - errors))"
+  fi
+
+  printf "  Objects:    %d written, %d errors\n" "$((NUM_OBJECTS - errors))" "$errors"
+  printf "  Duration:   %d ms\n" "$duration"
+  printf "  Throughput: %d ops/sec (%s/sec)\n" "$ops_sec" "$(human_size $((ops_sec * OBJECT_SIZE)))"
+
+  if [[ "$errors" -gt 0 ]]; then
+    printf "  ${RED}%d write errors${RESET}\n" "$errors"
+  fi
+  WRITE_ERRORS="$errors"
+  return $(( errors > 0 ? 1 : 0 ))
+}
+
+# --- read objects ---
+read_objects() {
+  local start end duration ops_sec errors=0 verify_errors=0
+  printf "\n${BOLD}${GREEN}--- READ ---${RESET}\n"
+  printf "Downloading %d objects from s3://%s/...\n" "$NUM_OBJECTS" "$BUCKET"
+
+  mkdir -p "${TMPDIR}/read"
+  start=$(now_ms)
+  for i in $(seq 1 "$NUM_OBJECTS"); do
+    if ! aws --endpoint-url "$S3_ENDPOINT" --no-verify-ssl \
+      s3 cp "s3://${BUCKET}/obj-${i}" "${TMPDIR}/read/obj-${i}" >/dev/null 2>&1; then
+      errors=$((errors + 1))
+      printf "${RED}  FAIL: obj-%d${RESET}\n" "$i"
+    fi
+  done
+  end=$(now_ms)
+
+  duration=$(( end - start ))
+  if [[ "$duration" -gt 0 ]]; then
+    ops_sec=$(( (NUM_OBJECTS - errors) * 1000 / duration ))
+  else
+    ops_sec="$((NUM_OBJECTS - errors))"
+  fi
+
+  printf "  Objects:    %d read, %d errors\n" "$((NUM_OBJECTS - errors))" "$errors"
+  printf "  Duration:   %d ms\n" "$duration"
+  printf "  Throughput: %d ops/sec (%s/sec)\n" "$ops_sec" "$(human_size $((ops_sec * OBJECT_SIZE)))"
+
+  # --- verify integrity ---
+  if [[ "$VERIFY" == "true" && "$errors" -eq 0 ]]; then
+    printf "\n${BOLD}--- VERIFY ---${RESET}\n"
+    for i in $(seq 1 "$NUM_OBJECTS"); do
+      local expected actual
+      expected=$(cat "${TMPDIR}/obj-${i}.sha256")
+      actual=$(sha256sum "${TMPDIR}/read/obj-${i}" | awk '{print $1}')
+      if [[ "$expected" != "$actual" ]]; then
+        verify_errors=$((verify_errors + 1))
+        printf "${RED}  MISMATCH: obj-%d (expected=%s got=%s)${RESET}\n" "$i" "$expected" "$actual"
+      fi
+    done
+    if [[ "$verify_errors" -eq 0 ]]; then
+      printf "  ${GREEN}All %d objects verified OK${RESET}\n" "$NUM_OBJECTS"
+    else
+      printf "  ${RED}%d verification errors${RESET}\n" "$verify_errors"
+    fi
+  fi
+
+  if [[ "$errors" -gt 0 ]]; then
+    printf "  ${RED}%d read errors${RESET}\n" "$errors"
+  fi
+
+  # cleanup read dir for next cycle
+  rm -rf "${TMPDIR}/read"
+  READ_ERRORS=$((errors + verify_errors))
+  return $(( READ_ERRORS > 0 ? 1 : 0 ))
+}
+
+# --- cleanup ---
+cleanup_bucket() {
+  local errors=0
+  printf "\n${BOLD}--- CLEANUP ---${RESET}\n"
+  printf "Deleting all objects in s3://%s/...\n" "$BUCKET"
+  if ! aws --endpoint-url "$S3_ENDPOINT" --no-verify-ssl \
+    s3 rm "s3://${BUCKET}" --recursive >/dev/null 2>&1; then
+    printf "  ${RED}Failed to delete objects${RESET}\n"
+    errors=$((errors + 1))
+  fi
+  printf "Deleting bucket s3://%s...\n" "$BUCKET"
+  if ! aws --endpoint-url "$S3_ENDPOINT" --no-verify-ssl \
+    s3 rb "s3://${BUCKET}" >/dev/null 2>&1; then
+    printf "  ${RED}Failed to delete bucket${RESET}\n"
+    errors=$((errors + 1))
+  fi
+  if [[ "$errors" -eq 0 ]]; then
+    printf "  ${GREEN}Done${RESET}\n"
+  else
+    printf "  ${RED}Cleanup completed with %d errors${RESET}\n" "$errors"
+  fi
+  return $(( errors > 0 ? 1 : 0 ))
+}
+
+# --- run a single bench cycle ---
+run_cycle() {
+  local cycle_num="${1:-1}"
+  local total_errors=0
+
+  printf "\n${BOLD}==============================${RESET}\n"
+  printf "${BOLD}  Cycle %d  |  %s${RESET}\n" "$cycle_num" "$(date -u '+%H:%M:%S UTC')"
+  printf "${BOLD}==============================${RESET}\n"
+  printf "  Objects: %d  |  Size: %s  |  Bucket: %s\n" \
+    "$NUM_OBJECTS" "$(human_size "$OBJECT_SIZE")" "$BUCKET"
+
+  if [[ "$READ_ONLY" != "true" ]]; then
+    generate_objects
+    write_objects || true
+    total_errors=$((total_errors + WRITE_ERRORS))
+  fi
+
+  if [[ "$WRITE_ONLY" != "true" ]]; then
+    read_objects || true
+    total_errors=$((total_errors + READ_ERRORS))
+  fi
+
+  printf "\n${BOLD}--- SUMMARY ---${RESET}\n"
+  if [[ "$total_errors" -eq 0 ]]; then
+    printf "  ${GREEN}Cycle %d completed successfully${RESET}\n" "$cycle_num"
+  else
+    printf "  ${RED}Cycle %d completed with %d errors${RESET}\n" "$cycle_num" "$total_errors"
+  fi
+
+  CYCLE_ERRORS="$total_errors"
+  return $(( total_errors > 0 ? 1 : 0 ))
+}
+
+# ===================
+# Main
+# ===================
+printf "\n${BOLD}  arbiter-s3-bench${RESET}\n"
+printf "  ================\n\n"
+
+if [[ "$READ_ONLY" != "true" ]]; then
+  ensure_bucket
+fi
+
+if [[ "$LOOP" == "true" ]]; then
+  cycle=1
+  total_cycles_errors=0
+  trap 'printf "\n${BOLD}Stopped after %d cycles (%d total errors)${RESET}\n" "$cycle" "$total_cycles_errors"; if [[ "$CLEANUP" == "true" ]]; then cleanup_bucket; fi; exit 0' INT
+  while true; do
+    run_cycle "$cycle" || true
+    total_cycles_errors=$((total_cycles_errors + CYCLE_ERRORS))
+    cycle=$((cycle + 1))
+    sleep 1
+  done
+else
+  run_cycle 1 || { status=$?; if [[ "$CLEANUP" == "true" ]]; then cleanup_bucket; fi; exit "$status"; }
+fi
+
+if [[ "$CLEANUP" == "true" ]]; then
+  cleanup_bucket
+fi
+
+printf "\n"
