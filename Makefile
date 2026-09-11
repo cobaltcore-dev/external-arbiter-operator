@@ -2,8 +2,8 @@ GIT_COMMIT=$(shell git log -1 --format=%H)
 GIT_TAG=$(shell git symbolic-ref -q --short HEAD || git describe --tags --exact-match)
 BUILD_DATE=$(shell date -Is -u)
 
-K8S_VERSION="1.34.1"
-ROOK_VERSION="1.18.6"
+K8S_VERSION="1.37.0"
+ROOK_VERSION="1.20.7"
 
 .PHONY: all
 all: operator

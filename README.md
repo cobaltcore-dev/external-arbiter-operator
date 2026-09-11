@@ -66,7 +66,7 @@ limactl start k8s
 # use kubeconfig provided by vm
 export KUBECONFIG="${HOME}/.lima/k8s/copied-from-guest/kubeconfig.yaml"
 # install cert manager
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.19.2/cert-manager.yaml
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.21.1/cert-manager.yaml
 # install rook operator
 kubectl apply -f ./rook/deploy/examples/crds.yaml
 kubectl apply -f ./rook/deploy/examples/common.yaml
@@ -94,6 +94,13 @@ kubectl apply -f ./contrib/k8s/examples/remote-arbiter.yaml -n arbiter-operator
 kubectl get remotearbiter -n arbiter-operator -w
 # check arbiter joined quorum
 kubectl exec deployment/rook-ceph-tools -n rook-ceph -it -- ceph mon dump
+# enable cilium monitoring
+limactl shell k8s cilium hubble enable
+limactl shell k8s cilium hubble port-forward &
+# show cilium status
+limactl shell k8s cilium status
+# observe external-arbiter
+limactl shell k8s hubble observe --to-label ceph.cobaltcore.sap.com/lookup=external-arbiter -n external-arbiter
 # remove chart
 helm uninstall --namespace arbiter-operator arbiter-operator
 # stop vm
