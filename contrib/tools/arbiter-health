@@ -209,9 +209,24 @@ render() {
   # RemoteCluster
   local rc_name="" rc_state="" rc_msg="" rc_ns="" rc_conditions=""
   if [[ -z "$ra_rc_name" ]]; then
-    # inline spec, find by owner
-    rc_name=$(kget get remotecluster -n "$OP_NAMESPACE" \
-      -o jsonpath="{.items[?(@.metadata.ownerReferences[0].name=='${ARBITER_NAME}')].metadata.name}")
+    # inline spec -- find RemoteCluster owned by this RemoteArbiter.
+    # ownerReferences is unordered, so scan all entries (not just [0]).
+    # Output format per item: "rc-name|Kind/Name,Kind/Name,...\n"
+    local rc_list=""
+    rc_list=$(kget get remotecluster -n "$OP_NAMESPACE" \
+      -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{range .metadata.ownerReferences[*]}{.kind}{"/"}{.name}{","}{end}{"\n"}{end}')
+    if [[ -n "$rc_list" ]]; then
+      while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        local rc_candidate rc_owners
+        rc_candidate="${line%%|*}"
+        rc_owners="${line#*|}"
+        if echo "$rc_owners" | tr ',' '\n' | grep -qxF "RemoteArbiter/${ARBITER_NAME}"; then
+          rc_name="$rc_candidate"
+          break
+        fi
+      done <<< "$rc_list"
+    fi
   else
     rc_name="$ra_rc_name"
   fi
