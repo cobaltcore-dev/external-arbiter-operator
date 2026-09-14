@@ -545,10 +545,10 @@ render() {
 
     # check if arbiter mon is in quorum
     if [[ -n "$ra_monid" ]]; then
-      if echo "$ceph_mon_list" | tr ',' '\n' | grep -qF "$ra_monid"; then
+      if echo "$ceph_mon_list" | tr ',' '\n' | grep -qxF "$ra_monid"; then
         printf "  Arbiter (%s):  [$(ok)]  In quorum\n" "$ra_monid"
       else
-        if echo "$ceph_monmap_names" | tr ',' '\n' | grep -qF "$ra_monid"; then
+        if echo "$ceph_monmap_names" | tr ',' '\n' | grep -qxF "$ra_monid"; then
           printf "  Arbiter (%s):  [$(err)]  In monmap but NOT in quorum\n" "$ra_monid"
         else
           printf "  Arbiter (%s):  [$(err)]  NOT in monmap or quorum\n" "$ra_monid"
