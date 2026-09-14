@@ -89,6 +89,11 @@ kexec() {
   echo "${result:-}"
 }
 
+# portable base64 decode (GNU uses -d, BSD/macOS uses -D)
+b64decode() {
+  base64 -d 2>/dev/null || base64 -D 2>/dev/null
+}
+
 # query the remote/target cluster (where the arbiter pod runs)
 # uses REMOTE_KUBECONFIG if resolved, otherwise falls back to kget (same cluster)
 RESOLVED_REMOTE_KUBECONFIG=""
@@ -154,7 +159,7 @@ resolve_remote_kubeconfig() {
   fi
   local tmpkubeconfig
   tmpkubeconfig=$(mktemp "${TMPDIR:-/tmp}/arbiter-health-remote-XXXXXX.kubeconfig")
-  echo "$kubeconfig_b64" | base64 -d > "$tmpkubeconfig"
+  echo "$kubeconfig_b64" | b64decode > "$tmpkubeconfig"
   RESOLVED_REMOTE_KUBECONFIG="$tmpkubeconfig"
 }
 

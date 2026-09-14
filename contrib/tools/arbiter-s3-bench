@@ -143,9 +143,13 @@ s3api() {
 
 # --- helper functions ---
 now_ms() {
-  # Use nanoseconds if available, fall back to seconds with 000
-  if date +%s%N >/dev/null 2>&1; then
-    date +%s%N | cut -b1-13
+  # Use nanoseconds if available, fall back to seconds with 000.
+  # BSD/macOS date exits 0 but outputs a literal "N" for %N, so
+  # validate the result is fully numeric before using it.
+  local ns
+  ns=$(date +%s%N 2>/dev/null) || true
+  if [[ "$ns" =~ ^[0-9]+$ ]]; then
+    echo "${ns:0:13}"
   else
     echo "$(date +%s)000"
   fi
