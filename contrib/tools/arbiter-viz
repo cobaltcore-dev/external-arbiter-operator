@@ -164,19 +164,14 @@ function extract_nested(line, outer, key,    needle, pos, rest, brace, depth, i,
   return extract(block, key)
 }
 
-# Extract destination port from l4 section. Tries "destination_port" first, then "port".
-function extract_port(line, section,    needle, pos, rest, pneedle, ppos, prest, val, i, ch) {
-  needle = Q section Q ":{"
+# Extract a port number from the l4 section by key name.
+function extract_l4_port(line, key,    needle, pos, rest, pneedle, ppos, prest, val, i, ch) {
+  needle = Q "l4" Q ":{"
   pos = index(line, needle)
   if (pos == 0) return ""
   rest = substr(line, pos + length(needle))
-  # try destination_port first (hubble v1+), then port
-  pneedle = Q "destination_port" Q ":"
+  pneedle = Q key Q ":"
   ppos = index(rest, pneedle)
-  if (ppos == 0) {
-    pneedle = Q "port" Q ":"
-    ppos = index(rest, pneedle)
-  }
   if (ppos == 0) return ""
   prest = substr(rest, ppos + length(pneedle))
   val = ""
@@ -186,6 +181,11 @@ function extract_port(line, section,    needle, pos, rest, pneedle, ppos, prest,
     else break
   }
   return val
+}
+
+# Determine whether a port is a known Ceph service port.
+function is_ceph_port(p) {
+  return (p == "3300" || p == "6789")
 }
 
 {
@@ -200,7 +200,20 @@ function extract_port(line, section,    needle, pos, rest, pneedle, ppos, prest,
   src_name  = extract_nested(line, "source", "pod_name")
   dst_ns    = extract_nested(line, "destination", "namespace")
   dst_name  = extract_nested(line, "destination", "pod_name")
-  dst_port  = extract_port(line, "l4")
+
+  # Extract both ports and resolve to the Ceph service port.
+  # Response flows have the service port as source_port and an
+  # ephemeral destination_port; request flows are the reverse.
+  src_port  = extract_l4_port(line, "source_port")
+  dst_port  = extract_l4_port(line, "destination_port")
+  if (is_ceph_port(dst_port))
+    svc_port = dst_port
+  else if (is_ceph_port(src_port))
+    svc_port = src_port
+  else if (dst_port != "" && dst_port != "0")
+    svc_port = dst_port
+  else
+    svc_port = src_port
 
   if (src_name == "" && src_ns == "") src_label = "(external)"
   else src_label = src_ns "/" src_name
@@ -209,7 +222,7 @@ function extract_port(line, section,    needle, pos, rest, pneedle, ppos, prest,
   else dst_label = dst_ns "/" dst_name
 
   port_info = ""
-  if (dst_port != "" && dst_port != "0") port_info = ":" dst_port
+  if (svc_port != "" && svc_port != "0") port_info = ":" svc_port
 
   edge = src_label "|" dst_label "|" port_info "|" verdict
   edge_count[edge]++
@@ -220,8 +233,8 @@ function extract_port(line, section,    needle, pos, rest, pneedle, ppos, prest,
 
   if (port_info != "") {
     port_stats[port_info]++
-    if (dst_port == "6789") port_names[port_info] = "msgr1"
-    else if (dst_port == "3300") port_names[port_info] = "msgr2"
+    if (svc_port == "6789") port_names[port_info] = "msgr1"
+    else if (svc_port == "3300") port_names[port_info] = "msgr2"
   }
 }
 
