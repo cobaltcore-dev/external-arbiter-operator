@@ -44,6 +44,9 @@ CYCLE_ERRORS=0
 # --- bucket tracking ---
 BUCKET_CREATED=false
 
+# --- unique per-run key prefix to avoid colliding with other data ---
+RUN_ID="bench-$(date +%s)-$$"
+
 # --- colors ---
 RESET="\033[0m"
 BOLD="\033[1m"
@@ -83,6 +86,12 @@ fi
 
 if [[ "$VERIFY" == "true" && ( "$READ_ONLY" == "true" || "$WRITE_ONLY" == "true" ) ]]; then
   echo "Error: --verify requires both write and read phases." >&2
+  exit 2
+fi
+
+if [[ "$READ_ONLY" == "true" && "$CLEANUP" == "true" ]]; then
+  echo "Error: --read-only and --cleanup are mutually exclusive." >&2
+  echo "Cleanup only removes objects written by this run." >&2
   exit 2
 fi
 
@@ -208,7 +217,7 @@ write_objects() {
   start=$(now_ms)
   for i in $(seq 1 "$NUM_OBJECTS"); do
     if ! aws --endpoint-url "$S3_ENDPOINT" --no-verify-ssl \
-      s3 cp "${TMPDIR}/obj-${i}" "s3://${BUCKET}/obj-${i}" >/dev/null 2>&1; then
+      s3 cp "${TMPDIR}/obj-${i}" "s3://${BUCKET}/${RUN_ID}/obj-${i}" >/dev/null 2>&1; then
       errors=$((errors + 1))
       printf "${RED}  FAIL: obj-%d${RESET}\n" "$i"
     fi
@@ -243,7 +252,7 @@ read_objects() {
   start=$(now_ms)
   for i in $(seq 1 "$NUM_OBJECTS"); do
     if ! aws --endpoint-url "$S3_ENDPOINT" --no-verify-ssl \
-      s3 cp "s3://${BUCKET}/obj-${i}" "${TMPDIR}/read/obj-${i}" >/dev/null 2>&1; then
+      s3 cp "s3://${BUCKET}/${RUN_ID}/obj-${i}" "${TMPDIR}/read/obj-${i}" >/dev/null 2>&1; then
       errors=$((errors + 1))
       printf "${RED}  FAIL: obj-%d${RESET}\n" "$i"
     fi
@@ -291,40 +300,37 @@ read_objects() {
 }
 
 # --- cleanup ---
-# Only removes objects created by this bench run (obj-1..N), never the
-# bucket itself. Pre-existing objects in the bucket are left untouched.
+# Only removes objects under this run's unique prefix, never the bucket
+# itself or objects from other runs.
 cleanup_objects() {
   local errors=0
   printf "\n${BOLD}--- CLEANUP ---${RESET}\n"
-  printf "Deleting bench objects obj-{1..%d} from s3://%s/...\n" "$NUM_OBJECTS" "$BUCKET"
-  for i in $(seq 1 "$NUM_OBJECTS"); do
-    if ! aws --endpoint-url "$S3_ENDPOINT" --no-verify-ssl \
-      s3 rm "s3://${BUCKET}/obj-${i}" >/dev/null 2>&1; then
-      errors=$((errors + 1))
-    fi
-  done
-  if [[ "$errors" -eq 0 ]]; then
-    printf "  ${GREEN}Removed %d objects${RESET}\n" "$NUM_OBJECTS"
+  printf "Deleting s3://%s/%s/ ...\n" "$BUCKET" "$RUN_ID"
+  if ! aws --endpoint-url "$S3_ENDPOINT" --no-verify-ssl \
+    s3 rm "s3://${BUCKET}/${RUN_ID}/" --recursive >/dev/null 2>&1; then
+    printf "  ${RED}Failed to delete objects under %s/${RESET}\n" "$RUN_ID"
+    errors=1
   else
-    printf "  ${RED}Failed to remove %d/%d objects${RESET}\n" "$errors" "$NUM_OBJECTS"
+    printf "  ${GREEN}Removed %d objects${RESET}\n" "$NUM_OBJECTS"
   fi
-  return $(( errors > 0 ? 1 : 0 ))
+  return "$errors"
 }
 
 # Print a summary of resources created by this run and how to remove them.
 print_cleanup_hint() {
   printf "\n${BOLD}  Resources created by this run:${RESET}\n"
+  printf "    Run prefix: %s\n" "$RUN_ID"
   if [[ "$BUCKET_CREATED" == "true" ]]; then
     printf "    Bucket: s3://%s\n" "$BUCKET"
   fi
   if [[ "$CLEANUP" != "true" ]]; then
-    printf "    Objects: obj-{1..%d} in s3://%s/\n" "$NUM_OBJECTS" "$BUCKET"
+    printf "    Objects: s3://%s/%s/obj-{1..%d}\n" "$BUCKET" "$RUN_ID" "$NUM_OBJECTS"
   fi
-  printf "\n${DIM}  To remove objects:${RESET}\n"
-  printf "${DIM}    for i in \$(seq 1 %d); do aws --endpoint-url %s s3 rm s3://%s/obj-\$i; done${RESET}\n" \
-    "$NUM_OBJECTS" "$S3_ENDPOINT" "$BUCKET"
+  printf "\n${DIM}  To remove this run's objects:${RESET}\n"
+  printf "${DIM}    aws --endpoint-url %s s3 rm s3://%s/%s/ --recursive${RESET}\n" \
+    "$S3_ENDPOINT" "$BUCKET" "$RUN_ID"
   if [[ "$BUCKET_CREATED" == "true" ]]; then
-    printf "${DIM}  To remove bucket:${RESET}\n"
+    printf "${DIM}  To remove bucket (after removing all objects):${RESET}\n"
     printf "${DIM}    aws --endpoint-url %s s3 rb s3://%s${RESET}\n" "$S3_ENDPOINT" "$BUCKET"
   fi
 }
@@ -339,6 +345,7 @@ run_cycle() {
   printf "${BOLD}==============================${RESET}\n"
   printf "  Objects: %d  |  Size: %s  |  Bucket: %s\n" \
     "$NUM_OBJECTS" "$(human_size "$OBJECT_SIZE")" "$BUCKET"
+  printf "  Prefix:  %s\n" "$RUN_ID"
 
   if [[ "$READ_ONLY" != "true" ]]; then
     generate_objects
