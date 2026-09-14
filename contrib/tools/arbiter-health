@@ -398,8 +398,8 @@ render() {
   fi
 
   # --- Connection line ---
-  printf "  |         msgr2 :3300  ${DIM}(v2 protocol, encrypted, preferred)${RESET}\n"
-  printf "  |         msgr1 :6789  ${DIM}(v1 legacy, unencrypted, fallback)${RESET}\n"
+  printf "  |         msgr2 :3300  ${DIM}(v2 protocol, preferred)${RESET}\n"
+  printf "  |         msgr1 :6789  ${DIM}(v1 legacy, fallback)${RESET}\n"
   printf "  |             |\n"
   printf "  |             |  ${DIM}(cross-cluster)${RESET}\n"
   printf "  |             |\n"
@@ -620,8 +620,8 @@ render() {
 
   printf "\n"
   printf "${DIM}  Legend: ${GREEN}OK${RESET}${DIM}=healthy  ${YELLOW}WARN${RESET}${DIM}=degraded  ${RED}ERROR${RESET}${DIM}=failed  ${DIM}N/A${RESET}${DIM}=unknown${RESET}\n"
-  printf "${DIM}  Protocols: msgr2=v2 wire protocol (encrypted, compressed, port 3300)${RESET}\n"
-  printf "${DIM}             msgr1=v1 legacy protocol (unencrypted, port 6789)${RESET}\n\n"
+  printf "${DIM}  Protocols: msgr2=v2 wire protocol (port 3300, secure/crc per ms_cluster_mode)${RESET}\n"
+  printf "${DIM}             msgr1=v1 legacy protocol (port 6789, no encryption)${RESET}\n\n"
 }
 
 # --- main ---
