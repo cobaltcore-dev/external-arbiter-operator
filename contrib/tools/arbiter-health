@@ -161,9 +161,6 @@ resolve_remote_kubeconfig() {
     return 0
   fi
 
-  if [[ -n "$RESOLVED_REMOTE_KUBECONFIG" && "$RESOLVED_REMOTE_KUBECONFIG" != "$REMOTE_KUBECONFIG" ]]; then
-    rm -f "$RESOLVED_REMOTE_KUBECONFIG"
-  fi
   local tmpkubeconfig
   tmpkubeconfig=$(mktemp "${TMPDIR:-/tmp}/arbiter-health-remote-XXXXXX.kubeconfig")
   echo "$kubeconfig_b64" | b64decode > "$tmpkubeconfig"
@@ -630,15 +627,21 @@ cleanup() {
   if [[ -n "$RESOLVED_REMOTE_KUBECONFIG" && "$RESOLVED_REMOTE_KUBECONFIG" != "$REMOTE_KUBECONFIG" ]]; then
     rm -f "$RESOLVED_REMOTE_KUBECONFIG"
   fi
+  rm -f "$RENDER_TMPFILE"
 }
 
+RENDER_TMPFILE=""
 if [[ "$WATCH" == "true" ]]; then
+  RENDER_TMPFILE=$(mktemp "${TMPDIR:-/tmp}/arbiter-health-render-XXXXXX")
   tput civis 2>/dev/null || true
   trap 'cleanup; tput cnorm 2>/dev/null || true; exit 0' INT TERM EXIT
   while true; do
-    output=$(render 2>&1) || true
+    # Run render in the current shell (not a subshell) so variable
+    # assignments like RESOLVED_REMOTE_KUBECONFIG persist across
+    # iterations. Redirect output to a temp file to capture it.
+    render > "$RENDER_TMPFILE" 2>&1 || true
     clear
-    printf '%s\n' "$output"
+    cat "$RENDER_TMPFILE"
     sleep 5
   done
 else
