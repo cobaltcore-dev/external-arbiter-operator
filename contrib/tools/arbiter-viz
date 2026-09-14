@@ -65,6 +65,13 @@ fi
 
 LABEL_SELECTOR="${LABEL_KEY}=${ARBITER_NAME}"
 
+# Hubble uses Cilium identity labels where Kubernetes labels are
+# prefixed with "k8s:" (e.g. k8s:app=foo). Add the prefix unless
+# the user already supplied one (e.g. reserved:world).
+if [[ "$LABEL_SELECTOR" != k8s:* && "$LABEL_SELECTOR" != reserved:* ]]; then
+  LABEL_SELECTOR="k8s:${LABEL_SELECTOR}"
+fi
+
 # --- collect flows ---
 echo "Fetching last ${FLOW_LIMIT} flows (namespace=${NAMESPACE}, label=${LABEL_SELECTOR})..."
 echo ""
