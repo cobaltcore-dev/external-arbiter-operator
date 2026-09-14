@@ -116,6 +116,13 @@ rget() {
 # Extract the remote kubeconfig from the RemoteCluster's accesskeyRef secret.
 # Writes the kubeconfig to a temp file and sets RESOLVED_REMOTE_KUBECONFIG.
 resolve_remote_kubeconfig() {
+  # Clean up any previously auto-extracted kubeconfig so stale configs
+  # are never reused (important in watch mode where render() loops)
+  if [[ -n "$RESOLVED_REMOTE_KUBECONFIG" && "$RESOLVED_REMOTE_KUBECONFIG" != "$REMOTE_KUBECONFIG" ]]; then
+    rm -f "$RESOLVED_REMOTE_KUBECONFIG"
+    RESOLVED_REMOTE_KUBECONFIG=""
+  fi
+
   # User explicitly provided a kubeconfig path -- use it directly
   if [[ -n "$REMOTE_KUBECONFIG" ]]; then
     if [[ ! -f "$REMOTE_KUBECONFIG" ]]; then
