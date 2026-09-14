@@ -980,6 +980,7 @@ func (r *RemoteArbiterReconciler) createArbiterService(ctx context.Context, s *R
 			Finalizers: []string{RemoteArbiterFinalizer},
 		},
 		Spec: corev1.ServiceSpec{
+			Type: s.remoteArbiter.Spec.Service.Type,
 			Ports: []corev1.ServicePort{
 				{
 					Name:       "tcp-msgr1",
