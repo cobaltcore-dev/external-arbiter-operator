@@ -15,7 +15,7 @@
 #   --write-only               Only write objects (skip reads)
 #   --verify                   Verify data integrity on read-back
 #   --loop                     Repeat continuously until Ctrl+C
-#   --cleanup                  Delete bucket and objects after bench
+#   --cleanup                  Delete bench objects after run (keeps bucket)
 #   --ceph-ns <ns>             Rook-Ceph namespace (default: rook-ceph)
 #   --store <name>             CephObjectStore name (default: my-store)
 #   --user <name>              CephObjectStoreUser name (default: test-user)
@@ -40,6 +40,9 @@ USER_NAME="test-user"
 WRITE_ERRORS=0
 READ_ERRORS=0
 CYCLE_ERRORS=0
+
+# --- bucket tracking ---
+BUCKET_CREATED=false
 
 # --- colors ---
 RESET="\033[0m"
@@ -192,6 +195,7 @@ ensure_bucket() {
       s3 mb "s3://${BUCKET}"; then
       return 1
     fi
+    BUCKET_CREATED=true
   fi
 }
 
@@ -287,27 +291,42 @@ read_objects() {
 }
 
 # --- cleanup ---
-cleanup_bucket() {
+# Only removes objects created by this bench run (obj-1..N), never the
+# bucket itself. Pre-existing objects in the bucket are left untouched.
+cleanup_objects() {
   local errors=0
   printf "\n${BOLD}--- CLEANUP ---${RESET}\n"
-  printf "Deleting all objects in s3://%s/...\n" "$BUCKET"
-  if ! aws --endpoint-url "$S3_ENDPOINT" --no-verify-ssl \
-    s3 rm "s3://${BUCKET}" --recursive >/dev/null 2>&1; then
-    printf "  ${RED}Failed to delete objects${RESET}\n"
-    errors=$((errors + 1))
-  fi
-  printf "Deleting bucket s3://%s...\n" "$BUCKET"
-  if ! aws --endpoint-url "$S3_ENDPOINT" --no-verify-ssl \
-    s3 rb "s3://${BUCKET}" >/dev/null 2>&1; then
-    printf "  ${RED}Failed to delete bucket${RESET}\n"
-    errors=$((errors + 1))
-  fi
+  printf "Deleting bench objects obj-{1..%d} from s3://%s/...\n" "$NUM_OBJECTS" "$BUCKET"
+  for i in $(seq 1 "$NUM_OBJECTS"); do
+    if ! aws --endpoint-url "$S3_ENDPOINT" --no-verify-ssl \
+      s3 rm "s3://${BUCKET}/obj-${i}" >/dev/null 2>&1; then
+      errors=$((errors + 1))
+    fi
+  done
   if [[ "$errors" -eq 0 ]]; then
-    printf "  ${GREEN}Done${RESET}\n"
+    printf "  ${GREEN}Removed %d objects${RESET}\n" "$NUM_OBJECTS"
   else
-    printf "  ${RED}Cleanup completed with %d errors${RESET}\n" "$errors"
+    printf "  ${RED}Failed to remove %d/%d objects${RESET}\n" "$errors" "$NUM_OBJECTS"
   fi
   return $(( errors > 0 ? 1 : 0 ))
+}
+
+# Print a summary of resources created by this run and how to remove them.
+print_cleanup_hint() {
+  printf "\n${BOLD}  Resources created by this run:${RESET}\n"
+  if [[ "$BUCKET_CREATED" == "true" ]]; then
+    printf "    Bucket: s3://%s\n" "$BUCKET"
+  fi
+  if [[ "$CLEANUP" != "true" ]]; then
+    printf "    Objects: obj-{1..%d} in s3://%s/\n" "$NUM_OBJECTS" "$BUCKET"
+  fi
+  printf "\n${DIM}  To remove objects:${RESET}\n"
+  printf "${DIM}    for i in \$(seq 1 %d); do aws --endpoint-url %s s3 rm s3://%s/obj-\$i; done${RESET}\n" \
+    "$NUM_OBJECTS" "$S3_ENDPOINT" "$BUCKET"
+  if [[ "$BUCKET_CREATED" == "true" ]]; then
+    printf "${DIM}  To remove bucket:${RESET}\n"
+    printf "${DIM}    aws --endpoint-url %s s3 rb s3://%s${RESET}\n" "$S3_ENDPOINT" "$BUCKET"
+  fi
 }
 
 # --- run a single bench cycle ---
@@ -356,7 +375,7 @@ fi
 if [[ "$LOOP" == "true" ]]; then
   cycle=1
   total_cycles_errors=0
-  trap 'printf "\n${BOLD}Stopped after %d cycles (%d total errors)${RESET}\n" "$cycle" "$total_cycles_errors"; if [[ "$CLEANUP" == "true" ]]; then cleanup_bucket; fi; exit 0' INT
+  trap 'printf "\n${BOLD}Stopped after %d cycles (%d total errors)${RESET}\n" "$cycle" "$total_cycles_errors"; if [[ "$CLEANUP" == "true" ]]; then cleanup_objects; fi; print_cleanup_hint; exit 0' INT
   while true; do
     run_cycle "$cycle" || true
     total_cycles_errors=$((total_cycles_errors + CYCLE_ERRORS))
@@ -364,11 +383,12 @@ if [[ "$LOOP" == "true" ]]; then
     sleep 1
   done
 else
-  run_cycle 1 || { status=$?; if [[ "$CLEANUP" == "true" ]]; then cleanup_bucket; fi; exit "$status"; }
+  run_cycle 1 || { status=$?; if [[ "$CLEANUP" == "true" ]]; then cleanup_objects; fi; print_cleanup_hint; exit "$status"; }
 fi
 
 if [[ "$CLEANUP" == "true" ]]; then
-  cleanup_bucket
+  cleanup_objects
 fi
 
+print_cleanup_hint
 printf "\n"
