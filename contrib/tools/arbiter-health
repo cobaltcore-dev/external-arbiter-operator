@@ -243,7 +243,8 @@ render() {
 
     # fallback: try running ceph CLI via a mon pod
     local mon_pod
-    mon_pod=$(kget get pod -n "$ra_ceph_ns" -l ceph_daemon_type=mon \
+    mon_pod=$(kget get pod -n "$ra_ceph_ns" \
+      -l "ceph_daemon_type=mon,app.kubernetes.io/part-of=${ra_ceph_name}" \
       -o jsonpath='{.items[0].metadata.name}')
     if [[ -n "$mon_pod" ]]; then
       ceph_quorum=$(kexec "$ra_ceph_ns" "$mon_pod" ceph quorum_status -f json --connect-timeout 5)
@@ -289,10 +290,12 @@ render() {
 
   # Mon deployments in rook-ceph
   local rook_mons="" rook_mon_details=""
-  rook_mons=$(kget get deploy -n "$ra_ceph_ns" -l ceph_daemon_type=mon \
+  rook_mons=$(kget get deploy -n "$ra_ceph_ns" \
+    -l "ceph_daemon_type=mon,app.kubernetes.io/part-of=${ra_ceph_name}" \
     -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.readyReplicas}{"/"}{.status.replicas}{"\n"}{end}')
   # Get mon IDs and readiness for quorum fallback assessment
-  rook_mon_details=$(kget get deploy -n "$ra_ceph_ns" -l ceph_daemon_type=mon \
+  rook_mon_details=$(kget get deploy -n "$ra_ceph_ns" \
+    -l "ceph_daemon_type=mon,app.kubernetes.io/part-of=${ra_ceph_name}" \
     -o jsonpath='{range .items[*]}{.metadata.labels.ceph_daemon_id}{" "}{.status.readyReplicas}{" "}{.status.replicas}{"\n"}{end}')
 
   # RGW (CephObjectStore) status
