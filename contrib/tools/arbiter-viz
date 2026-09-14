@@ -377,6 +377,6 @@ END {
 
   printf "\n"
   printf DIM "  Legend: " GREEN "green" RESET DIM "=forwarded " RED "red" RESET DIM "=dropped " YELLOW "yellow" RESET DIM "=other" RESET "\n"
-  printf DIM "  Ports: 6789=msgr1 (legacy), 3300=msgr2 (v2 protocol)" RESET "\n\n"
+  printf DIM "  Ports: 6789=msgr1 (v1 legacy), 3300=msgr2 (v2, secure/crc per ms_cluster_mode)" RESET "\n\n"
 }
 ' "$TMPFILE"
