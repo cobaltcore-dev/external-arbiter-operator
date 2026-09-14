@@ -102,10 +102,6 @@ kubectl apply -f ./contrib/k8s/examples/object-store-user.yaml
 # wait for RGW to be ready
 kubectl wait --for=jsonpath='{.status.phase}'=Ready cephobjectstore/my-store -n rook-ceph --timeout=300s
 kubectl wait --for=create secret/rook-ceph-object-user-my-store-test-user -n rook-ceph --timeout=300s
-# run S3 bench (write + read + verify 50 objects)
-limactl shell k8s bash ./contrib/tools/arbiter-s3-bench --verify
-# run S3 bench in loop mode (continuous traffic until Ctrl+C)
-limactl shell k8s bash ./contrib/tools/arbiter-s3-bench --loop
 # enable cilium monitoring
 limactl shell k8s cilium hubble enable
 limactl shell k8s cilium hubble port-forward &
@@ -113,6 +109,10 @@ limactl shell k8s cilium hubble port-forward &
 limactl shell k8s cilium status
 # observe external-arbiter
 limactl shell k8s hubble observe --to-label ceph.cobaltcore.sap.com/lookup=external-arbiter -n external-arbiter
+# run S3 bench (write + read + verify 50 objects)
+limactl shell k8s bash ./contrib/tools/arbiter-s3-bench --verify
+# run S3 bench in loop mode (continuous traffic until Ctrl+C)
+limactl shell k8s bash ./contrib/tools/arbiter-s3-bench --loop
 # remove chart
 helm uninstall --namespace arbiter-operator arbiter-operator
 # stop vm
