@@ -110,6 +110,8 @@ limactl shell k8s cilium status
 # observe external-arbiter
 limactl shell k8s hubble observe --to-label ceph.cobaltcore.sap.com/lookup=external-arbiter -n external-arbiter
 # run S3 bench (write + read + verify 50 objects)
+# NOTE: arbiter-s3-bench is for local development only (Lima VM).
+#       Do NOT run against production systems.
 limactl shell k8s bash ./contrib/tools/arbiter-s3-bench --verify
 # run S3 bench in loop mode (continuous traffic until Ctrl+C)
 limactl shell k8s bash ./contrib/tools/arbiter-s3-bench --loop

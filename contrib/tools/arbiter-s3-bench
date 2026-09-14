@@ -4,6 +4,11 @@
 #
 # arbiter-s3-bench - Generate S3 read/write traffic against Ceph RGW
 #
+# WARNING: This tool is intended for LOCAL DEVELOPMENT AND TESTING ONLY,
+# typically inside a Lima VM (limactl shell). Do NOT run this against
+# production systems. It creates and deletes S3 objects, and incorrect
+# usage may interfere with real workloads or data.
+#
 # Usage:
 #   arbiter-s3-bench [options]
 #
@@ -57,7 +62,7 @@ YELLOW="\033[33m"
 DIM="\033[2m"
 
 usage() {
-  sed -n '8,24p' "$0" | sed 's/^# \?//'
+  sed -n '7,29p' "$0" | sed 's/^# \?//'
   exit 0
 }
 
