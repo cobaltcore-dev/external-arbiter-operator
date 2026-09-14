@@ -556,10 +556,17 @@ render() {
       fi
     fi
   else
-    # --- Ceph unreachable: Kubernetes-level fallback assessment ---
-    printf "  ${YELLOW}[WARN]  Ceph cluster unreachable (quorum likely lost, cluster is read-only)${RESET}\n"
+    # --- Ceph quorum data unavailable ---
+    # Empty output can mean the toolbox pod is missing, RBAC denied exec,
+    # the Ceph CLI is not installed, or the request timed out. None of
+    # these establish that quorum is lost; report as unavailable.
+    printf "  ${YELLOW}[WARN]  Ceph quorum status unavailable${RESET}\n"
+    printf "  ${DIM}         Could not reach Ceph CLI via tools deployment or mon pod.${RESET}\n"
+    printf "  ${DIM}         Possible causes: toolbox missing, RBAC denied, CLI timeout,${RESET}\n"
+    printf "  ${DIM}         or actual quorum loss. Check manually:${RESET}\n"
+    printf "  ${DIM}           kubectl exec deploy/%s -n %s -- ceph quorum_status${RESET}\n" "$CEPH_TOOLS" "$ra_ceph_ns"
     printf "\n"
-    printf "  ${BOLD}Expected mons (from Kubernetes):${RESET}\n"
+    printf "  ${BOLD}Mon deployment status (from Kubernetes):${RESET}\n"
 
     local k8s_total_mons=0 k8s_ready_mons=0
 
@@ -602,15 +609,15 @@ render() {
     printf "\n"
     if [[ "$k8s_total_mons" -gt 0 ]]; then
       local k8s_majority=$(( (k8s_total_mons / 2) + 1 ))
-      printf "  Availability:    %d/%d mons ready (need %d/%d for quorum)\n" \
-        "$k8s_ready_mons" "$k8s_total_mons" "$k8s_majority" "$k8s_total_mons"
+      printf "  Availability:    %d/%d mon deployments ready (need %d for quorum)\n" \
+        "$k8s_ready_mons" "$k8s_total_mons" "$k8s_majority"
       if [[ "$k8s_ready_mons" -lt "$k8s_majority" ]]; then
-        printf "  Assessment:      [$(err)]  ${RED}QUORUM LOST${RESET} (%d/%d ready, need %d)\n" \
-          "$k8s_ready_mons" "$k8s_total_mons" "$k8s_majority"
+        printf "  Assessment:      [$(warn)]  ${YELLOW}Insufficient mon deployments ready (%d/%d) -- quorum may be at risk${RESET}\n" \
+          "$k8s_ready_mons" "$k8s_total_mons"
       elif [[ "$k8s_ready_mons" -eq "$k8s_total_mons" ]]; then
-        printf "  Assessment:      [$(warn)]  All mons ready but Ceph unreachable - may be recovering\n"
+        printf "  Assessment:      [$(warn)]  All mon deployments ready but Ceph CLI unreachable\n"
       else
-        printf "  Assessment:      [$(warn)]  Degraded (%d/%d ready), Ceph may be recovering\n" \
+        printf "  Assessment:      [$(warn)]  %d/%d mon deployments ready, Ceph CLI unreachable\n" \
           "$k8s_ready_mons" "$k8s_total_mons"
       fi
     else
