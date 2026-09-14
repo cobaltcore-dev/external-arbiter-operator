@@ -11,11 +11,12 @@
 #   -n, --num-objects <N>      Number of objects per cycle (default: 50)
 #   -s, --object-size <bytes>  Object size in bytes (default: 4096)
 #   -b, --bucket <name>        Bucket name (default: arbiter-test)
-#   --read-only                Only read existing objects
+#   --read-only                Only read existing objects (requires --run-id)
 #   --write-only               Only write objects (skip reads)
 #   --verify                   Verify data integrity on read-back
 #   --loop                     Repeat continuously until Ctrl+C
 #   --cleanup                  Delete bench objects after run (keeps bucket)
+#   --run-id <id>              Reuse a specific run prefix (required for --read-only)
 #   --ceph-ns <ns>             Rook-Ceph namespace (default: rook-ceph)
 #   --store <name>             CephObjectStore name (default: my-store)
 #   --user <name>              CephObjectStoreUser name (default: test-user)
@@ -44,8 +45,8 @@ CYCLE_ERRORS=0
 # --- bucket tracking ---
 BUCKET_CREATED=false
 
-# --- unique per-run key prefix to avoid colliding with other data ---
-RUN_ID="bench-$(date +%s)-$$"
+# --- unique per-run key prefix (overridable via --run-id) ---
+RUN_ID=""
 
 # --- colors ---
 RESET="\033[0m"
@@ -71,6 +72,7 @@ while [[ $# -gt 0 ]]; do
     --verify)          VERIFY=true; shift ;;
     --loop)            LOOP=true; shift ;;
     --cleanup)         CLEANUP=true; shift ;;
+    --run-id)          RUN_ID="$2"; shift 2 ;;
     --ceph-ns)         CEPH_NS="$2"; shift 2 ;;
     --store)           STORE_NAME="$2"; shift 2 ;;
     --user)            USER_NAME="$2"; shift 2 ;;
@@ -93,6 +95,17 @@ if [[ "$READ_ONLY" == "true" && "$CLEANUP" == "true" ]]; then
   echo "Error: --read-only and --cleanup are mutually exclusive." >&2
   echo "Cleanup only removes objects written by this run." >&2
   exit 2
+fi
+
+if [[ "$READ_ONLY" == "true" && -z "$RUN_ID" ]]; then
+  echo "Error: --read-only requires --run-id <id> to identify which objects to read." >&2
+  echo "The run ID is printed at the start of each bench cycle." >&2
+  exit 2
+fi
+
+# Generate a fresh run ID if not provided via --run-id
+if [[ -z "$RUN_ID" ]]; then
+  RUN_ID="bench-$(date +%s)-$$"
 fi
 
 # --- check dependencies ---
