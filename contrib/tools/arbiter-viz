@@ -12,7 +12,7 @@
 #   -l, --label <label>     Pod selector label (default: ceph.cobaltcore.sap.com/lookup)
 #   -a, --arbiter <name>    Arbiter name for label value (default: auto-detect)
 #   -c, --count <N>         Number of recent flows to fetch (default: 100)
-#   -f, --follow            Follow mode (stream until Ctrl+C)
+#   -f, --follow            Follow mode (raw JSON stream until Ctrl+C)
 #   --lima <vm>             Run hubble via limactl shell <vm>
 #   -h, --help              Show this help
 #
@@ -80,6 +80,12 @@ TMPFILE=$(mktemp)
 trap 'rm -f "$TMPFILE"' EXIT
 
 if [[ "$FOLLOW" == "true" ]]; then
+  # Follow mode streams raw JSON (one flow per line) from both directions.
+  # The topology/summary visualization requires a complete flow set and is
+  # only available in the default (non-follow) mode.
+  echo "Streaming raw JSON flows (namespace=${NAMESPACE}, label=${LABEL_SELECTOR})..."
+  echo "Press Ctrl+C to stop. Use without -f for the rendered topology view."
+  echo ""
   # Stream both directions concurrently to capture bidirectional traffic
   run_hubble observe \
     --namespace "$NAMESPACE" \
