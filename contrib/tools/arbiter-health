@@ -630,7 +630,9 @@ cleanup() {
   if [[ -n "$RESOLVED_REMOTE_KUBECONFIG" && "$RESOLVED_REMOTE_KUBECONFIG" != "$REMOTE_KUBECONFIG" ]]; then
     rm -f "$RESOLVED_REMOTE_KUBECONFIG"
   fi
-  rm -f "$RENDER_TMPFILE"
+  if [[ -n "$RENDER_TMPFILE" ]]; then
+    rm -f "$RENDER_TMPFILE"
+  fi
 }
 
 RENDER_TMPFILE=""
