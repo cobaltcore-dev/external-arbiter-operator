@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Mock kubectl - returns configurable output and exit status.
+# Logs all invocations to MOCK_KUBECTL_CALL_LOG.
+echo "kubectl $*" >> "${MOCK_KUBECTL_CALL_LOG:-/dev/null}"
+
+# Support per-resource-type output via MOCK_KUBECTL_OUTPUT_<resource>
+# e.g. MOCK_KUBECTL_OUTPUT_remotecluster for "kubectl get remotecluster ..."
+for arg in "$@"; do
+  case "$arg" in
+    remotearbiter|remotecluster|cephcluster|cephobjectstore|deploy|pod|svc|secret)
+      varname="MOCK_KUBECTL_OUTPUT_${arg}"
+      if [[ -n "${!varname:-}" ]]; then
+        printf '%s' "${!varname}"
+        exit "${MOCK_KUBECTL_EXIT:-0}"
+      fi
+      ;;
+  esac
+done
+
+printf '%s' "${MOCK_KUBECTL_OUTPUT:-}"
+exit "${MOCK_KUBECTL_EXIT:-0}"
