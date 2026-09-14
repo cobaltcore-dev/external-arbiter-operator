@@ -107,19 +107,38 @@ if [[ "$FOLLOW" == "true" ]]; then
 fi
 
 # Collect bidirectional flows: to and from the arbiter
-{
-  run_hubble observe \
-    --namespace "$NAMESPACE" \
-    --to-label "$LABEL_SELECTOR" \
-    --last "$FLOW_LIMIT" \
-    -o json 2>/dev/null || true
+TO_TMPFILE=$(mktemp)
+FROM_TMPFILE=$(mktemp)
+trap 'rm -f "$TMPFILE" "$TO_TMPFILE" "$FROM_TMPFILE"' EXIT
 
-  run_hubble observe \
-    --namespace "$NAMESPACE" \
-    --from-label "$LABEL_SELECTOR" \
-    --last "$FLOW_LIMIT" \
-    -o json 2>/dev/null || true
-} > "$TMPFILE"
+to_status=0
+run_hubble observe \
+  --namespace "$NAMESPACE" \
+  --to-label "$LABEL_SELECTOR" \
+  --last "$FLOW_LIMIT" \
+  -o json > "$TO_TMPFILE" 2>/dev/null || to_status=$?
+
+from_status=0
+run_hubble observe \
+  --namespace "$NAMESPACE" \
+  --from-label "$LABEL_SELECTOR" \
+  --last "$FLOW_LIMIT" \
+  -o json > "$FROM_TMPFILE" 2>/dev/null || from_status=$?
+
+cat "$TO_TMPFILE" "$FROM_TMPFILE" > "$TMPFILE"
+
+# Warn about partial collection
+if [[ "$to_status" -ne 0 && "$from_status" -ne 0 ]]; then
+  echo "Error: Both flow collections failed (to-label exit=$to_status, from-label exit=$from_status)."
+  echo "Ensure Hubble relay is running and port-forwarded."
+  echo "  hubble status"
+  echo "  cilium hubble port-forward &"
+  exit 1
+elif [[ "$to_status" -ne 0 ]]; then
+  echo "Warning: --to-label collection failed (exit=$to_status). Showing from-label flows only." >&2
+elif [[ "$from_status" -ne 0 ]]; then
+  echo "Warning: --from-label collection failed (exit=$from_status). Showing to-label flows only." >&2
+fi
 
 FLOW_COUNT=$(wc -l < "$TMPFILE" | tr -d ' ')
 if [[ "$FLOW_COUNT" -eq 0 ]]; then
