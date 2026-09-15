@@ -1,4 +1,6 @@
 #!/usr/bin/env bats
+# Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
+# SPDX-License-Identifier: Apache-2.0
 # Tests for contrib/tools/arbiter-s3-bench
 
 setup() {

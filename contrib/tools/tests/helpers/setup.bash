@@ -1,4 +1,6 @@
 # Common bats test setup for arbiter tool tests.
+# Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
+# SPDX-License-Identifier: Apache-2.0
 # Source this from each .bats file's setup() function.
 
 TOOLS_DIR="$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." && pwd)"

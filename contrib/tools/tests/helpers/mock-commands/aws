@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
+# SPDX-License-Identifier: Apache-2.0
 # Mock aws CLI - logs calls and returns configurable exit status.
 echo "aws $*" >> "${MOCK_AWS_CALL_LOG:-/dev/null}"
 
