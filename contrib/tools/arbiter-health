@@ -266,22 +266,27 @@ render() {
     fi
   fi
   if [[ -n "$ceph_quorum" ]]; then
+    # Normalize JSON to a single line so parsing works with both compact and
+    # pretty-printed (multi-line) output from ceph quorum_status.
+    local ceph_quorum_flat
+    ceph_quorum_flat=$(printf '%s' "$ceph_quorum" | tr '\n' ' ' | sed 's/  */ /g')
+
     # extract quorum_leader_name value using sed (portable, no awk quote issues)
-    ceph_leader=$(printf '%s' "$ceph_quorum" \
-      | sed -n 's/.*"quorum_leader_name":"\([^"]*\)".*/\1/p')
+    ceph_leader=$(printf '%s' "$ceph_quorum_flat" \
+      | sed -n 's/.*"quorum_leader_name" *: *"\([^"]*\)".*/\1/p')
     # extract quorum_names array, strip brackets and quotes
-    ceph_mon_list=$(printf '%s' "$ceph_quorum" \
-      | sed -n 's/.*"quorum_names":\[\([^]]*\)\].*/\1/p' \
-      | sed 's/"//g')
+    ceph_mon_list=$(printf '%s' "$ceph_quorum_flat" \
+      | sed -n 's/.*"quorum_names" *: *\[\([^]]*\)\].*/\1/p' \
+      | sed 's/"//g; s/ *//g')
     # extract monmap.mons array using bracket-matching (mons is nested inside
-    # monmap and followed by other fields, so end-of-string anchors fail)
+    # monmap and followed by other fields, so end-of-string anchors fail).
+    # The regex match handles optional whitespace around ":" and "[".
     local mons_json=""
-    mons_json=$(printf '%s' "$ceph_quorum" | awk -v Q='"' '
+    mons_json=$(printf '%s' "$ceph_quorum_flat" | awk -v Q='"' '
       {
-        needle = Q "mons" Q ":["
-        pos = index($0, needle)
-        if (pos == 0) exit
-        rest = substr($0, pos + length(needle))
+        n = match($0, Q "mons" Q "[[:space:]]*:[[:space:]]*\\[")
+        if (n == 0) exit
+        rest = substr($0, n + RLENGTH)
         depth = 1
         for (i = 1; i <= length(rest) && depth > 0; i++) {
           ch = substr(rest, i, 1)
@@ -292,14 +297,14 @@ render() {
       }')
     # count mons by counting "name" keys within the extracted array
     ceph_monmap_count=$(printf '%s' "$mons_json" \
-      | { grep -o '"name"' || true; } | wc -l | tr -d ' ')
+      | { grep -oE '"name" *:' || true; } | wc -l | tr -d ' ')
     if [[ -z "$ceph_monmap_count" || "$ceph_monmap_count" -eq 0 ]]; then
       ceph_monmap_count=""
     fi
     # extract all mon names from the mons array
     ceph_monmap_names=$(printf '%s' "$mons_json" \
-      | { grep -o '"name":"[^"]*"' || true; } \
-      | sed 's/"name":"//g; s/"//g' \
+      | { grep -oE '"name" *: *"[^"]*"' || true; } \
+      | sed 's/"name" *: *"//g; s/"//g' \
       | tr '\n' ',' | sed 's/,$//')
   fi
 
