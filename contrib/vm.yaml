@@ -18,15 +18,15 @@ portForwards:
     hostPort: 8080
     proto: tcp
 images:
-- location: "https://cloud-images.ubuntu.com/releases/22.04/release-20240308/ubuntu-22.04-server-cloudimg-amd64.img"
+- location: "https://cloud-images.ubuntu.com/releases/26.04/release-20260918/ubuntu-26.04-server-cloudimg-amd64.img"
   arch: "x86_64"
-  digest: "sha256:42dcf9757e75c3275486b397a752fb535c7cd8e5232ee5ee349554b7a55f1702"
-- location: "https://cloud-images.ubuntu.com/releases/22.04/release-20240308/ubuntu-22.04-server-cloudimg-arm64.img"
+  digest: "sha256:4908fb59ccd4e87ae4e8e973b7ef56f535448eacb24a87fd787270c0048987bc"
+- location: "https://cloud-images.ubuntu.com/releases/26.04/release-20260918/ubuntu-26.04-server-cloudimg-arm64.img"
   arch: "aarch64"
-  digest: "sha256:0f5f68b9b74686b8a847024364031e2b95e4d3855e5177a99b33d7c55e45907f"
-- location: "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-amd64.img"
+  digest: "sha256:8dc812bc6356d0abf825d8029f25f1b71f02cb103e1d0cc5c17fbb2572322972"
+- location: "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img"
   arch: "x86_64"
-- location: "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-arm64.img"
+- location: "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-arm64.img"
   arch: "aarch64"
 mounts: 
 - location: "~"
@@ -238,4 +238,9 @@ message: |
   export KUBECONFIG="{{.Dir}}/copied-from-guest/kubeconfig.yaml"
   kubectl ...
   ------
+# Do not require Lima NICs for systemd-networkd-wait-online: the first-boot
+# rename to eth0 fails on 26.04 (LP: #2136392) and would block boot for 120s.
+# Lima's cidata bootcmd renames the NIC and waits for it instead.
+param:
+  internal_netplanOptional: "true"
 
