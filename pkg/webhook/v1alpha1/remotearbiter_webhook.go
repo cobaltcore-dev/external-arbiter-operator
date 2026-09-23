@@ -57,6 +57,12 @@ func (r *RemoteArbiterCustomDefaulter) Default(_ context.Context, remoteArbiter 
 		setRemoteClusterSpecDefaults(remoteArbiter.Spec.RemoteCluster.Spec, remoteArbiter.Name)
 	}
 
+	if remoteArbiter.Spec.Service == nil {
+		remoteArbiter.Spec.Service = &v1alpha1.ServiceConfiguration{
+			Type: corev1.ServiceTypeClusterIP,
+		}
+	}
+
 	return nil
 }
 
