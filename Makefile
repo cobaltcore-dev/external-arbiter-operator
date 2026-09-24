@@ -79,7 +79,7 @@ deps:
 
 .PHONY: test-unit
 test-unit:
-	go test -race -shuffle=on -count=1 ./pkg/webhook/... ./test/...
+	go test -race -shuffle=on -count=1 ./pkg/controller/... ./pkg/webhook/... ./test/...
 
 # test-unit-repeat re-runs the unit suites REPEAT (default 20) times, each with a
 # fresh shuffle/Ginkgo seed, to expose order dependence and flakes (#67). Ginkgo
@@ -89,7 +89,7 @@ REPEAT ?= 20
 test-unit-repeat:
 	@for i in $$(seq 1 $(REPEAT)); do \
 		echo "=== unit run $$i/$(REPEAT) ==="; \
-		go test -race -shuffle=on -count=1 ./pkg/webhook/... ./test/... || exit 1; \
+		go test -race -shuffle=on -count=1 ./pkg/controller/... ./pkg/webhook/... ./test/... || exit 1; \
 	done
 
 .PHONY: test-envtest
@@ -99,6 +99,30 @@ test-envtest: env
 
 .PHONY: test-all
 test-all: test-unit test-envtest
+
+# test-cover reports statement coverage for the reconciler and webhook packages,
+# merging the pure-unit and envtest (build-tagged) runs into one profile. The
+# controller package is exercised almost entirely by the envtest suite, so a
+# unit-only profile understates it — both runs must be merged. This target
+# REPORTS a number; it does not gate. Set a floor with COVER_MIN once the number
+# is stable, then ratchet it up as gaps in docs/testing/traceability.md close.
+# ponytail: report-only until a measured floor exists; gate via COVER_MIN when set.
+COVER_MIN ?=
+.PHONY: test-cover
+test-cover: env
+	go test -race -shuffle=on -count=1 -coverprofile=cover.unit.out \
+		-coverpkg=./pkg/... ./pkg/webhook/... ./test/...
+	KUBEBUILDER_ASSETS="$(abspath $(shell go tool setup-envtest use $(K8S_VERSION) --bin-dir ./.env -p path))" \
+		go test -tags envtest -shuffle=on -count=1 -coverprofile=cover.envtest.out \
+		-coverpkg=./pkg/... ./pkg/controller/...
+	@{ echo "mode: atomic"; \
+	   grep -h -v '^mode:' cover.unit.out cover.envtest.out; } > cover.out
+	@go tool cover -func=cover.out | tail -1
+	@total=$$(go tool cover -func=cover.out | tail -1 | grep -oE '[0-9]+\.[0-9]+'); \
+	if [ -n "$(COVER_MIN)" ]; then \
+		awk -v t="$$total" -v m="$(COVER_MIN)" 'BEGIN{ if (t+0 < m+0){ printf "coverage %.1f%% below floor %s%%\n", t, m; exit 1 } else { printf "coverage %.1f%% meets floor %s%%\n", t, m } }'; \
+	fi
+
 
 # test runs the full layered suite (unit + envtest). It does not mutate source
 # or run `pretty`. It does NOT clone Rook: the envtest suite loads CephCluster
