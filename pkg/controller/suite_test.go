@@ -25,6 +25,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -83,7 +84,20 @@ func freePort() (int, error) {
 	return tcpAddress.Port, nil
 }
 
-func namespaceEmpty(k8sClient client.Client, clusterTypes []client.Object, namespace string) (bool, error) {
+// namespaceCleanUp force-empties the namespace of every given type and reports
+// whether it is now empty. It is designed to run inside an Eventually loop: the
+// controller is still reconciling during teardown, so a single pass races it
+// (stale-resourceVersion Update conflicts; objects re-created after deletion).
+// Each pass re-lists (fresh resourceVersions), strips finalizers, and deletes,
+// tolerating NotFound and Conflict — the next Eventually pass retries with a
+// fresh GET. Objects created by the controller carry RemoteArbiterFinalizer and
+// several error-path specs leave them behind where no reconcile removes it, so
+// teardown must not depend on reconcile semantics: it force-strips finalizers.
+// Repeating until empty converges once the source RemoteArbiter is gone and the
+// controller stops re-creating children, giving RandomizeAllSpecs order-
+// independent specs. (#78)
+func namespaceCleanUp(k8sClient client.Client, clusterTypes []client.Object, namespace string) (bool, error) {
+	empty := true
 	for _, clusterType := range clusterTypes {
 		gvk, err := k8sClient.GroupVersionKindFor(clusterType)
 		if err != nil {
@@ -98,50 +112,36 @@ func namespaceEmpty(k8sClient client.Client, clusterTypes []client.Object, names
 		}
 
 		if len(objectList.Items) != 0 {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
-func namespaceCleanUp(k8sClient client.Client, clusterTypes []client.Object, namespace string) error {
-	for _, clusterType := range clusterTypes {
-		gvk, err := k8sClient.GroupVersionKindFor(clusterType)
-		if err != nil {
-			return fmt.Errorf("unable to get gvk: %w", err)
+			empty = false
 		}
 
-		objectList := &unstructured.UnstructuredList{}
-		objectList.SetGroupVersionKind(gvk)
-		err = k8sClient.List(ctx, objectList, &client.ListOptions{Namespace: namespace})
-		if err != nil {
-			return fmt.Errorf("unable to list resources: %w", err)
-		}
-
-		for _, item := range objectList.Items {
-			if err = k8sClient.Delete(ctx, &item); err != nil {
-				return fmt.Errorf("unable to delete resource: %w", err)
+		for i := range objectList.Items {
+			item := &objectList.Items[i]
+			if len(item.GetFinalizers()) != 0 {
+				item.SetFinalizers(nil)
+				if err = k8sClient.Update(ctx, item); err != nil &&
+					!apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
+					return false, fmt.Errorf("unable to strip finalizers: %w", err)
+				}
+			}
+			if err = k8sClient.Delete(ctx, item); err != nil && !apierrors.IsNotFound(err) {
+				return false, fmt.Errorf("unable to delete resource: %w", err)
 			}
 		}
 	}
-	return nil
+	return empty, nil
 }
 
 func TestControllers(t *testing.T) {
 	RegisterFailHandler(Fail)
 
-	// NOTE(#67): RandomizeAllSpecs is intentionally NOT enabled here. Enabling
-	// it surfaces a pre-existing order dependence between the "should succeed"
-	// and "should fail to check if arbiter deployment ready" specs (the target
-	// arbiter Deployment carries a finalizer and is not guaranteed fully
-	// deleted by the AfterEach namespaceCleanUp before the next spec runs, so a
-	// randomized predecessor leaves state that trips a 30s Eventually).
-	// Fixing that requires finalizer-aware, deletion-waiting cleanup, which is
-	// out of scope for this test-layering change and must not touch reconcile
-	// behavior. Specs therefore run in declaration order; -shuffle=on still
-	// randomizes package-level ordering. Full spec randomization for this suite
-	// belongs to the follow-up that hardens cleanup.
-	RunSpecs(t, "Controller Suite")
+	// Randomize spec order to surface hidden order dependence between specs.
+	// The AfterEach cleanup now waits (on the correct API server) for all
+	// finalizer-bearing objects to be fully gone before the next spec runs
+	// (#78), so specs are independent of declaration order.
+	suiteConfig, _ := GinkgoConfiguration()
+	suiteConfig.RandomizeAllSpecs = true
+	RunSpecs(t, "Controller Suite", suiteConfig)
 }
 
 var _ = BeforeSuite(func() {

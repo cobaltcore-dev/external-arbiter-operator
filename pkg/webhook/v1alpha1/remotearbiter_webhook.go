@@ -121,7 +121,7 @@ func validateRemoteArbiterSpec(remoteArbiterSpec *v1alpha1.RemoteArbiterSpec, ro
 	if len(errMsgs) != 0 {
 		for _, errMsg := range errMsgs {
 			validationErrors = append(validationErrors, field.Invalid(
-				rootPath.Child("cephCluster", "namespace"), remoteArbiterSpec.CephCluster.Name, errMsg))
+				rootPath.Child("cephCluster", "namespace"), remoteArbiterSpec.CephCluster.Namespace, errMsg))
 		}
 	}
 
@@ -129,7 +129,7 @@ func validateRemoteArbiterSpec(remoteArbiterSpec *v1alpha1.RemoteArbiterSpec, ro
 	if len(errMsgs) != 0 {
 		for _, errMsg := range errMsgs {
 			validationErrors = append(validationErrors, field.Invalid(
-				rootPath.Child("monIdPrefix"), remoteArbiterSpec.RemoteCluster.Name, errMsg))
+				rootPath.Child("monIdPrefix"), remoteArbiterSpec.MonIDPrefix, errMsg))
 		}
 	}
 
@@ -167,12 +167,10 @@ func validateRemoteArbiterSpec(remoteArbiterSpec *v1alpha1.RemoteArbiterSpec, ro
 			parsedIP, err := netip.ParseAddr(remoteArbiterSpec.Service.NodeIP)
 			if err != nil {
 				validationErrors = append(validationErrors, field.Invalid(
-					rootPath.Child("service", "nodeIp"), remoteArbiterSpec.Service.Type, err.Error()))
-			}
-
-			if !parsedIP.Is4() {
+					rootPath.Child("service", "nodeIp"), remoteArbiterSpec.Service.NodeIP, err.Error()))
+			} else if !parsedIP.Is4() {
 				validationErrors = append(validationErrors, field.Invalid(
-					rootPath.Child("service", "nodeIp"), remoteArbiterSpec.Service.Type, "should be IPv4 address"))
+					rootPath.Child("service", "nodeIp"), remoteArbiterSpec.Service.NodeIP, "should be IPv4 address"))
 			}
 		}
 	}
