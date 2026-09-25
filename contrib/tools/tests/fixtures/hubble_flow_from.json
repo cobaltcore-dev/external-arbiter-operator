@@ -1,0 +1,2 @@
+{"verdict":"FORWARDED","l4":{"TCP":{"source_port":3300,"destination_port":49152}},"source":{"namespace":"external-arbiter","pod_name":"ext-c"},"destination":{"namespace":"rook-ceph","pod_name":"mon-a"}}
+{"verdict":"FORWARDED","l4":{"TCP":{"source_port":6789,"destination_port":52000}},"source":{"namespace":"external-arbiter","pod_name":"ext-c"},"destination":{"namespace":"rook-ceph","pod_name":"mon-b"}}
