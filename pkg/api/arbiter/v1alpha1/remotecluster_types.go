@@ -125,7 +125,3 @@ type RemoteClusterList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []RemoteCluster `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&RemoteCluster{}, &RemoteClusterList{})
-}
