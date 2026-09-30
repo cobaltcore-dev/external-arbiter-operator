@@ -744,5 +744,161 @@ var _ = Describe("RemoteArbiter Controller", func() {
 				}
 			}, Timeout, Interval).Should(Succeed())
 		})
+
+		It("should rebuild a legacy deployment with the service address when a service is added", func() {
+			conditionsMap := map[string]metav1.ConditionStatus{
+				v1alpha1.RemoteClusterExistsConditionType:     metav1.ConditionTrue,
+				v1alpha1.RemoteClusterReadyConditionType:      metav1.ConditionTrue,
+				v1alpha1.CephClusterExistsConditionType:       metav1.ConditionTrue,
+				v1alpha1.CephClusterReadyConditionType:        metav1.ConditionTrue,
+				v1alpha1.CephClusterConfiguredConditionType:   metav1.ConditionTrue,
+				v1alpha1.MonitorDeploymentExistsConditionType: metav1.ConditionTrue,
+				v1alpha1.MonitorDeploymentReadyConditionType:  metav1.ConditionTrue,
+				v1alpha1.ArbiterDeploymentExistsConditionType: metav1.ConditionTrue,
+				v1alpha1.ArbiterDeploymentReadyConditionType:  metav1.ConditionTrue,
+			}
+
+			cephCluster := refCephCluster.DeepCopy()
+			err := sourceK8sClient.Create(ctx, cephCluster)
+			Expect(err).NotTo(HaveOccurred())
+
+			monitorOverrideConfigMap := refMonitorOverrideConfigMap.DeepCopy()
+			monitorOverrideConfigMap.Namespace = cephClusterNamespacedName.Namespace
+			err = sourceK8sClient.Create(ctx, monitorOverrideConfigMap)
+			Expect(err).NotTo(HaveOccurred())
+
+			monitorKeyringSecret := refMonitorKeyringSecret.DeepCopy()
+			monitorKeyringSecret.Namespace = cephClusterNamespacedName.Namespace
+			err = sourceK8sClient.Create(ctx, monitorKeyringSecret)
+			Expect(err).NotTo(HaveOccurred())
+
+			monitorEnvVarSecret := refMonitorEnvVarSecret.DeepCopy()
+			monitorEnvVarSecret.Namespace = cephClusterNamespacedName.Namespace
+			err = sourceK8sClient.Create(ctx, monitorEnvVarSecret)
+			Expect(err).NotTo(HaveOccurred())
+
+			monitorDeployment := refMonitorDeployment.DeepCopy()
+			monitorDeployment.Namespace = cephClusterNamespacedName.Namespace
+			monitorDeployment.Labels["app.kubernetes.io/part-of"] = cephClusterNamespacedName.Name
+			err = sourceK8sClient.Create(ctx, monitorDeployment)
+			Expect(err).NotTo(HaveOccurred())
+
+			monitorDeployment.Status.UpdatedReplicas = 1
+			monitorDeployment.Status.Replicas = 1
+			err = sourceK8sClient.Status().Update(ctx, monitorDeployment)
+			Expect(err).NotTo(HaveOccurred())
+
+			cephCluster.Status.Phase = rookv1.ConditionReady
+			err = sourceK8sClient.Status().Update(ctx, cephCluster)
+			Expect(err).NotTo(HaveOccurred())
+
+			kubeconfig, err := arbiterInstallerUser.KubeConfig()
+			Expect(err).NotTo(HaveOccurred())
+
+			remoteSecret := refRemoteSecret.DeepCopy()
+			remoteSecret.StringData["kubeconfig.yaml"] = string(kubeconfig)
+			err = sourceK8sClient.Create(ctx, remoteSecret)
+			Expect(err).NotTo(HaveOccurred())
+
+			remoteCluster := refRemoteCluster.DeepCopy()
+			err = sourceK8sClient.Create(ctx, remoteCluster)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Create a legacy RemoteArbiter without a service, as created by
+			// the controller before service based exposure was available.
+			remoteArbiter := refRemoteArbiter.DeepCopy()
+			err = sourceK8sClient.Create(ctx, remoteArbiter)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Wait for the arbiter deployment to appear on the target cluster
+			// and to advertise the ephemeral pod IP. A deployment left over
+			// from another spec may be adopted by the controller first; the
+			// public address drift check converges it to the desired address.
+			var arbiterDeployment *appsv1.Deployment
+			Eventually(func(g Gomega) {
+				arbiterDeploymentList := &appsv1.DeploymentList{}
+				namespaceSelector := client.InNamespace(remoteCluster.Spec.Namespace)
+				labelSelector := client.MatchingLabels{
+					RemoteArbiterLookupLabel: remoteArbiter.Name,
+				}
+				err := targetK8sClient.List(ctx, arbiterDeploymentList, namespaceSelector, labelSelector)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(arbiterDeploymentList.Items).To(HaveLen(1))
+				arbiterDeployment = &arbiterDeploymentList.Items[0]
+				g.Expect(deploymentPublicAddress(arbiterDeployment)).To(Equal("$(ROOK_POD_IP)"))
+			}, Timeout, Interval).Should(Succeed())
+
+			// Simulate arbiter deployment becoming ready. The controller may
+			// update the deployment concurrently, so tolerate update conflicts.
+			Eventually(func(g Gomega) {
+				deployment := arbiterDeployment.DeepCopy()
+				deployment.Status.UpdatedReplicas = 1
+				deployment.Status.Replicas = 1
+				g.Expect(targetK8sClient.Status().Update(ctx, deployment)).To(Succeed())
+			}, Timeout, Interval).Should(Succeed())
+
+			// Verify the legacy arbiter reaches the Ready state
+			Eventually(func(g Gomega) {
+				err := sourceK8sClient.Get(ctx, remoteArbiterNamespacedName, remoteArbiter)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(remoteArbiter.Status.State).To(Equal(v1alpha1.RemoteArbiterReadyState))
+			}, Timeout, Interval).Should(Succeed())
+
+			// Add a service to the legacy RemoteArbiter, as the defaulting
+			// webhook would do when the resource is updated after an upgrade.
+			// The controller updates the resource status concurrently, so
+			// tolerate update conflicts.
+			Eventually(func(g Gomega) {
+				err := sourceK8sClient.Get(ctx, remoteArbiterNamespacedName, remoteArbiter)
+				g.Expect(err).NotTo(HaveOccurred())
+				remoteArbiter.Spec.Service = &v1alpha1.ServiceConfiguration{
+					Type: corev1.ServiceTypeClusterIP,
+				}
+				g.Expect(sourceK8sClient.Update(ctx, remoteArbiter)).To(Succeed())
+			}, Timeout, Interval).Should(Succeed())
+
+			// Wait for the Service to appear on the target cluster
+			var arbiterService *corev1.Service
+			Eventually(func(g Gomega) {
+				serviceList := &corev1.ServiceList{}
+				namespaceSelector := client.InNamespace(remoteCluster.Spec.Namespace)
+				labelSelector := client.MatchingLabels{
+					RemoteArbiterLookupLabel: remoteArbiter.Name,
+				}
+				err := targetK8sClient.List(ctx, serviceList, namespaceSelector, labelSelector)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(serviceList.Items).To(HaveLen(1))
+				arbiterService = &serviceList.Items[0]
+				g.Expect(arbiterService.Spec.ClusterIP).NotTo(BeEmpty())
+			}, Timeout, Interval).Should(Succeed())
+
+			// The deployment is rebuilt with the Service ClusterIP instead of
+			// the pod IP placeholder
+			Eventually(func(g Gomega) {
+				arbiterDeploymentList := &appsv1.DeploymentList{}
+				namespaceSelector := client.InNamespace(remoteCluster.Spec.Namespace)
+				labelSelector := client.MatchingLabels{
+					RemoteArbiterLookupLabel: remoteArbiter.Name,
+				}
+				err := targetK8sClient.List(ctx, arbiterDeploymentList, namespaceSelector, labelSelector)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(arbiterDeploymentList.Items).To(HaveLen(1))
+				g.Expect(deploymentPublicAddress(&arbiterDeploymentList.Items[0])).
+					To(Equal(arbiterService.Spec.ClusterIP))
+			}, Timeout, Interval).Should(Succeed())
+
+			// Verify the arbiter returns to the Ready state
+			Eventually(func(g Gomega) {
+				err := sourceK8sClient.Get(ctx, remoteArbiterNamespacedName, remoteArbiter)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(remoteArbiter.Status.State).To(Equal(v1alpha1.RemoteArbiterReadyState))
+				g.Expect(remoteArbiter.Status.Message).NotTo(BeEmpty())
+				g.Expect(remoteArbiter.Status.Conditions).To(HaveLen(len(conditionsMap)))
+				for _, condition := range remoteArbiter.Status.Conditions {
+					expectedCondition := conditionsMap[condition.Type]
+					g.Expect(condition.Status).To(Equal(expectedCondition))
+				}
+			}, Timeout, Interval).Should(Succeed())
+		})
 	})
 })

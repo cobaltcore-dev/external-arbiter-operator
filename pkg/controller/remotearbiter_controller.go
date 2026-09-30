@@ -439,6 +439,31 @@ func (r *RemoteArbiterReconciler) checkArbiterDeploymentUpToDate(ctx context.Con
 		s.log.Info("deployment is up to date")
 	}
 
+	// The deployment spec is only regenerated when a source resource changes,
+	// but the public address can also change independently of those sources:
+	// a load balancer ingress address may be (re)allocated, a service may be
+	// recreated with a new cluster IP, or a legacy deployment without a
+	// service may still advertise the ephemeral pod IP placeholder. Compare
+	// the desired address with the address applied to the deployment and
+	// rebuild the deployment spec when they differ, so that the arbiter mon
+	// does not keep advertising a stale address in the monmap indefinitely.
+	desiredPublicAddress, err := r.determinePublicAddress(s)
+	if err != nil {
+		return fmt.Errorf("unable to determine desired public address: %w", err)
+	}
+	appliedPublicAddress := deploymentPublicAddress(s.arbiterDeployment)
+	if desiredPublicAddress != appliedPublicAddress {
+		s.log.Info("arbiter deployment public address is outdated",
+			"desired", desiredPublicAddress, "applied", appliedPublicAddress)
+		if err := r.updateArbiterDeployment(ctx, s); err != nil {
+			return fmt.Errorf("unable to update arbiter deployment: %w", err)
+		}
+		s.outdated = true
+		s.shouldRestart = false
+	} else {
+		s.log.Info("arbiter deployment public address is up to date")
+	}
+
 	s.log.Info("update decisions", "outdated", s.outdated, "should restart", s.shouldRestart)
 
 	return nil
@@ -598,6 +623,22 @@ func (r *RemoteArbiterReconciler) determinePublicAddress(s *RemoteArbiterReconci
 	default:
 		return "", fmt.Errorf("unsupported service type %s", s.arbiterService.Spec.Type)
 	}
+}
+
+// deploymentPublicAddress returns the public address currently applied to the
+// arbiter deployment, as written into the "--public-addr=" container argument
+// by makeDeploymentSpec. It returns an empty string when no such argument is
+// found, which is treated as outdated by the caller to force a rebuild.
+func deploymentPublicAddress(deployment *appsv1.Deployment) string {
+	publicAddrPrefix := "--public-addr="
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		for _, arg := range container.Args {
+			if strings.HasPrefix(arg, publicAddrPrefix) {
+				return strings.TrimPrefix(arg, publicAddrPrefix)
+			}
+		}
+	}
+	return ""
 }
 
 func (r *RemoteArbiterReconciler) modifyContainers(containers []corev1.Container, monID string, envVarSecretName string, publicAddress string) {
