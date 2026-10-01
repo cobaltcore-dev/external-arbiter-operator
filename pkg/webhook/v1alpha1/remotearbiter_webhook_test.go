@@ -52,6 +52,9 @@ var _ = Describe("RemoteArbiter Webhook", func() {
 			Expect(remoteArbiter.Spec.CephCluster.Namespace).To(Equal(remoteArbiter.Namespace))
 
 			Expect(remoteArbiter.Spec.MonIDPrefix).To(Equal(DefaultMonIDPrefix))
+
+			Expect(remoteArbiter.Spec.Service).NotTo(BeNil())
+			Expect(remoteArbiter.Spec.Service.Type).To(Equal(corev1.ServiceTypeClusterIP))
 		})
 
 		It("Should not apply defaults when values are set", func() {
@@ -72,6 +75,9 @@ var _ = Describe("RemoteArbiter Webhook", func() {
 						Name: "remote-cluster",
 					},
 					MonIDPrefix: "custom-prefix",
+					Service: &v1alpha1.ServiceConfiguration{
+						Type: corev1.ServiceTypeLoadBalancer,
+					},
 				},
 			}
 
@@ -83,6 +89,7 @@ var _ = Describe("RemoteArbiter Webhook", func() {
 			Expect(remoteArbiter.Spec.CheckInterval.Duration).To(Equal(remoteArbiterCopy.Spec.CheckInterval.Duration))
 			Expect(remoteArbiter.Spec.CephCluster.Namespace).To(Equal(remoteArbiterCopy.Spec.CephCluster.Namespace))
 			Expect(remoteArbiter.Spec.MonIDPrefix).To(Equal(remoteArbiterCopy.Spec.MonIDPrefix))
+			Expect(remoteArbiter.Spec.Service.Type).To(Equal(corev1.ServiceTypeLoadBalancer))
 		})
 	})
 
