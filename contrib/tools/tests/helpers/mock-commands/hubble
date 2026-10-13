@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
+# SPDX-License-Identifier: Apache-2.0
+# Mock hubble - logs calls and returns configurable output/exit status.
+echo "hubble $*" >> "${MOCK_HUBBLE_CALL_LOG:-/dev/null}"
+
+# Follow mode: block until killed (like real hubble --follow)
+if [[ "$*" == *"--follow"* ]]; then
+  if [[ -n "${MOCK_HUBBLE_OUTPUT:-}" ]]; then
+    printf '%s\n' "$MOCK_HUBBLE_OUTPUT"
+  fi
+  # Sleep to simulate blocking; tests will kill this process
+  sleep 60 &
+  wait $! 2>/dev/null || true
+  exit 0
+fi
+
+# Support separate exit/output for --from-label vs --to-label
+if [[ "$*" == *"--from-label"* && -n "${MOCK_HUBBLE_FROM_EXIT:-}" ]]; then
+  if [[ -n "${MOCK_HUBBLE_FROM_OUTPUT:-}" ]]; then
+    printf '%s\n' "$MOCK_HUBBLE_FROM_OUTPUT"
+  fi
+  exit "${MOCK_HUBBLE_FROM_EXIT}"
+fi
+
+if [[ -n "${MOCK_HUBBLE_OUTPUT:-}" ]]; then
+  printf '%s\n' "$MOCK_HUBBLE_OUTPUT"
+fi
+exit "${MOCK_HUBBLE_EXIT:-0}"

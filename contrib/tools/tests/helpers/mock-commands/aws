@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
+# SPDX-License-Identifier: Apache-2.0
+# Mock aws CLI - logs calls and returns configurable exit status.
+echo "aws $*" >> "${MOCK_AWS_CALL_LOG:-/dev/null}"
+
+# Support per-subcommand behavior
+case "$*" in
+  *"s3api head-bucket"*)
+    exit "${MOCK_AWS_HEAD_BUCKET_EXIT:-0}"
+    ;;
+  *"s3 rm"*)
+    exit "${MOCK_AWS_RM_EXIT:-0}"
+    ;;
+  *"s3 rb"*)
+    exit "${MOCK_AWS_RB_EXIT:-0}"
+    ;;
+  *"s3 cp"*)
+    exit "${MOCK_AWS_CP_EXIT:-0}"
+    ;;
+  *"s3 mb"*)
+    exit "${MOCK_AWS_MB_EXIT:-0}"
+    ;;
+esac
+
+exit "${MOCK_AWS_EXIT:-0}"
