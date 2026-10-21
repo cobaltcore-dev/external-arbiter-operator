@@ -1407,7 +1407,12 @@ func (r *RemoteArbiterReconciler) cleanUpArbiterDeployment(ctx context.Context, 
 
 		objectList := &unstructured.UnstructuredList{}
 		objectList.SetGroupVersionKind(gvk)
-		err = r.List(ctx, objectList, namespaceSelector, labelSelector)
+		// List on the remote cluster via the remote cluster client. Using
+		// the reconciler's own client here would query the source cluster,
+		// always find an empty list, and silently skip deletion of the
+		// remote objects, leaving them orphaned with a finalizer that
+		// nobody removes.
+		err = s.remoteClusterClient.List(ctx, objectList, namespaceSelector, labelSelector)
 		if err != nil {
 			return fmt.Errorf("unable to list remote resources %s %s: %w", RemoteClusterTypeName, s.remoteClusterObjectKey, err)
 		}
