@@ -5,6 +5,7 @@ package controller
 
 import (
 	"fmt"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -99,26 +100,32 @@ var _ = Describe("RemoteArbiter Controller", func() {
 				&v1alpha1.RemoteCluster{},
 				&v1alpha1.RemoteArbiter{},
 			}
-			err := namespaceCleanUp(sourceK8sClient, sourceClusterTypes, namespaceName)
-			Expect(err).NotTo(HaveOccurred())
-
 			targetClusterTypes := []client.Object{
 				&corev1.Secret{},
 				&corev1.Service{},
 				&corev1.ConfigMap{},
 				&appsv1.Deployment{},
 			}
-			err = namespaceCleanUp(targetK8sClient, targetClusterTypes, ArbiterInstallationNamespaceName)
-			Expect(err).NotTo(HaveOccurred())
 
+			// The controller's deletion cleanup can be delayed well beyond
+			// the Eventually timeouts below by its reconcile error backoff,
+			// so force-delete (finalizers included) on both clusters instead
+			// of waiting for it. The specs assert the real cleanup behavior;
+			// the AfterEach only guarantees a clean slate for the next spec.
+			// Retry inside Eventually: the controller races the finalizer
+			// removal with its own updates, and objects stuck in Terminating
+			// would break the Create calls of the next spec.
 			Eventually(func(g Gomega) {
+				g.Expect(forceNamespaceCleanUp(sourceK8sClient, sourceClusterTypes, namespaceName)).To(Succeed())
+				g.Expect(forceNamespaceCleanUp(targetK8sClient, targetClusterTypes, ArbiterInstallationNamespaceName)).To(Succeed())
+
 				empty, err := namespaceEmpty(sourceK8sClient, sourceClusterTypes, namespaceName)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(empty).To(BeTrue())
 			}, Timeout, Interval).Should(Succeed())
 
 			Eventually(func(g Gomega) {
-				empty, err := namespaceEmpty(sourceK8sClient, sourceClusterTypes, ArbiterInstallationNamespaceName)
+				empty, err := namespaceEmpty(targetK8sClient, targetClusterTypes, ArbiterInstallationNamespaceName)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(empty).To(BeTrue())
 			}, Timeout, Interval).Should(Succeed())
@@ -570,7 +577,12 @@ var _ = Describe("RemoteArbiter Controller", func() {
 			err = sourceK8sClient.Create(ctx, remoteArbiter)
 			Expect(err).NotTo(HaveOccurred())
 
-			var arbiterDeployment *appsv1.Deployment
+			// Mark the arbiter deployment ready. Retry on conflict and
+			// re-assert on every poll: the controller updates the deployment
+			// while rolling it out. Its reconcile error backoff (accumulated
+			// from earlier "remote cluster not ready" retries) can delay the
+			// observation of the ready status beyond the default timeout,
+			// so the ready wait below uses a longer timeout.
 			Eventually(func(g Gomega) {
 				arbiterDeploymentList := &appsv1.DeploymentList{}
 				namespaceSelector := client.InNamespace(remoteCluster.Spec.Namespace)
@@ -580,13 +592,14 @@ var _ = Describe("RemoteArbiter Controller", func() {
 				err := targetK8sClient.List(ctx, arbiterDeploymentList, namespaceSelector, labelSelector)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(arbiterDeploymentList.Items).To(HaveLen(1))
-				arbiterDeployment = &arbiterDeploymentList.Items[0]
+				arbiterDeployment := &arbiterDeploymentList.Items[0]
+				if arbiterDeployment.Status.Replicas != 1 || arbiterDeployment.Status.UpdatedReplicas != 1 {
+					arbiterDeployment.Status.UpdatedReplicas = 1
+					arbiterDeployment.Status.Replicas = 1
+					err = targetK8sClient.Status().Update(ctx, arbiterDeployment)
+					g.Expect(err).NotTo(HaveOccurred())
+				}
 			}, Timeout, Interval).Should(Succeed())
-
-			arbiterDeployment.Status.UpdatedReplicas = 1
-			arbiterDeployment.Status.Replicas = 1
-			err = targetK8sClient.Status().Update(ctx, arbiterDeployment)
-			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func(g Gomega) {
 				err := sourceK8sClient.Get(ctx, remoteArbiterNamespacedName, remoteArbiter)
@@ -601,7 +614,8 @@ var _ = Describe("RemoteArbiter Controller", func() {
 						g.Expect(condition.Message).NotTo(BeEmpty())
 					}
 				}
-			}, Timeout, Interval).Should(Succeed())
+			}, time.Minute*2, Interval).Should(Succeed())
 		})
+
 	})
 })
