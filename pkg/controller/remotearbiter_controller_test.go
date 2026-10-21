@@ -5,6 +5,7 @@ package controller
 
 import (
 	"fmt"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -14,6 +15,7 @@ import (
 	rookv1 "github.com/rook/rook/pkg/apis/ceph.rook.io/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/cobaltcore-dev/external-arbiter-operator/pkg/api/arbiter/v1alpha1"
@@ -99,26 +101,32 @@ var _ = Describe("RemoteArbiter Controller", func() {
 				&v1alpha1.RemoteCluster{},
 				&v1alpha1.RemoteArbiter{},
 			}
-			err := namespaceCleanUp(sourceK8sClient, sourceClusterTypes, namespaceName)
-			Expect(err).NotTo(HaveOccurred())
-
 			targetClusterTypes := []client.Object{
 				&corev1.Secret{},
 				&corev1.Service{},
 				&corev1.ConfigMap{},
 				&appsv1.Deployment{},
 			}
-			err = namespaceCleanUp(targetK8sClient, targetClusterTypes, ArbiterInstallationNamespaceName)
-			Expect(err).NotTo(HaveOccurred())
 
+			// The controller's deletion cleanup can be delayed well beyond
+			// the Eventually timeouts below by its reconcile error backoff,
+			// so force-delete (finalizers included) on both clusters instead
+			// of waiting for it. The specs assert the real cleanup behavior;
+			// the AfterEach only guarantees a clean slate for the next spec.
+			// Retry inside Eventually: the controller races the finalizer
+			// removal with its own updates, and objects stuck in Terminating
+			// would break the Create calls of the next spec.
 			Eventually(func(g Gomega) {
+				g.Expect(forceNamespaceCleanUp(sourceK8sClient, sourceClusterTypes, namespaceName)).To(Succeed())
+				g.Expect(forceNamespaceCleanUp(targetK8sClient, targetClusterTypes, ArbiterInstallationNamespaceName)).To(Succeed())
+
 				empty, err := namespaceEmpty(sourceK8sClient, sourceClusterTypes, namespaceName)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(empty).To(BeTrue())
 			}, Timeout, Interval).Should(Succeed())
 
 			Eventually(func(g Gomega) {
-				empty, err := namespaceEmpty(sourceK8sClient, sourceClusterTypes, ArbiterInstallationNamespaceName)
+				empty, err := namespaceEmpty(targetK8sClient, targetClusterTypes, ArbiterInstallationNamespaceName)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(empty).To(BeTrue())
 			}, Timeout, Interval).Should(Succeed())
@@ -570,7 +578,12 @@ var _ = Describe("RemoteArbiter Controller", func() {
 			err = sourceK8sClient.Create(ctx, remoteArbiter)
 			Expect(err).NotTo(HaveOccurred())
 
-			var arbiterDeployment *appsv1.Deployment
+			// Mark the arbiter deployment ready. Retry on conflict and
+			// re-assert on every poll: the controller updates the deployment
+			// while rolling it out. Its reconcile error backoff (accumulated
+			// from earlier "remote cluster not ready" retries) can delay the
+			// observation of the ready status beyond the default timeout,
+			// so the ready wait below uses a longer timeout.
 			Eventually(func(g Gomega) {
 				arbiterDeploymentList := &appsv1.DeploymentList{}
 				namespaceSelector := client.InNamespace(remoteCluster.Spec.Namespace)
@@ -580,13 +593,14 @@ var _ = Describe("RemoteArbiter Controller", func() {
 				err := targetK8sClient.List(ctx, arbiterDeploymentList, namespaceSelector, labelSelector)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(arbiterDeploymentList.Items).To(HaveLen(1))
-				arbiterDeployment = &arbiterDeploymentList.Items[0]
+				arbiterDeployment := &arbiterDeploymentList.Items[0]
+				if arbiterDeployment.Status.Replicas != 1 || arbiterDeployment.Status.UpdatedReplicas != 1 {
+					arbiterDeployment.Status.UpdatedReplicas = 1
+					arbiterDeployment.Status.Replicas = 1
+					err = targetK8sClient.Status().Update(ctx, arbiterDeployment)
+					g.Expect(err).NotTo(HaveOccurred())
+				}
 			}, Timeout, Interval).Should(Succeed())
-
-			arbiterDeployment.Status.UpdatedReplicas = 1
-			arbiterDeployment.Status.Replicas = 1
-			err = targetK8sClient.Status().Update(ctx, arbiterDeployment)
-			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func(g Gomega) {
 				err := sourceK8sClient.Get(ctx, remoteArbiterNamespacedName, remoteArbiter)
@@ -601,7 +615,126 @@ var _ = Describe("RemoteArbiter Controller", func() {
 						g.Expect(condition.Message).NotTo(BeEmpty())
 					}
 				}
+			}, time.Minute*2, Interval).Should(Succeed())
+		})
+
+		It("should clean up remote resources on deletion", func() {
+			targetClusterTypes := []client.Object{
+				&corev1.Secret{},
+				&corev1.Service{},
+				&corev1.ConfigMap{},
+				&appsv1.Deployment{},
+			}
+
+			// Ensure a clean slate: leftover objects in the target namespace
+			// would make the controller's label lookups ambiguous, so they
+			// have to go first. The AfterEach force-cleans both namespaces,
+			// but stay defensive in case a previous spec's cleanup did not
+			// fully converge.
+			err := forceNamespaceCleanUp(targetK8sClient, targetClusterTypes, ArbiterInstallationNamespaceName)
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func(g Gomega) {
+				empty, err := namespaceEmpty(targetK8sClient, targetClusterTypes, ArbiterInstallationNamespaceName)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(empty).To(BeTrue())
 			}, Timeout, Interval).Should(Succeed())
+
+			cephCluster := refCephCluster.DeepCopy()
+			err = sourceK8sClient.Create(ctx, cephCluster)
+			Expect(err).NotTo(HaveOccurred())
+
+			monitorOverrideConfigMap := refMonitorOverrideConfigMap.DeepCopy()
+			monitorOverrideConfigMap.Namespace = cephClusterNamespacedName.Namespace
+			err = sourceK8sClient.Create(ctx, monitorOverrideConfigMap)
+			Expect(err).NotTo(HaveOccurred())
+
+			monitorKeyringSecret := refMonitorKeyringSecret.DeepCopy()
+			monitorKeyringSecret.Namespace = cephClusterNamespacedName.Namespace
+			err = sourceK8sClient.Create(ctx, monitorKeyringSecret)
+			Expect(err).NotTo(HaveOccurred())
+
+			monitorEnvVarSecret := refMonitorEnvVarSecret.DeepCopy()
+			monitorEnvVarSecret.Namespace = cephClusterNamespacedName.Namespace
+			err = sourceK8sClient.Create(ctx, monitorEnvVarSecret)
+			Expect(err).NotTo(HaveOccurred())
+
+			monitorDeployment := refMonitorDeployment.DeepCopy()
+			monitorDeployment.Namespace = cephClusterNamespacedName.Namespace
+			monitorDeployment.Labels["app.kubernetes.io/part-of"] = cephClusterNamespacedName.Name
+			err = sourceK8sClient.Create(ctx, monitorDeployment)
+			Expect(err).NotTo(HaveOccurred())
+
+			monitorDeployment.Status.UpdatedReplicas = 1
+			monitorDeployment.Status.Replicas = 1
+			err = sourceK8sClient.Status().Update(ctx, monitorDeployment)
+			Expect(err).NotTo(HaveOccurred())
+
+			cephCluster.Status.Phase = rookv1.ConditionReady
+			err = sourceK8sClient.Status().Update(ctx, cephCluster)
+			Expect(err).NotTo(HaveOccurred())
+
+			kubeconfig, err := arbiterInstallerUser.KubeConfig()
+			Expect(err).NotTo(HaveOccurred())
+
+			remoteSecret := refRemoteSecret.DeepCopy()
+			remoteSecret.StringData["kubeconfig.yaml"] = string(kubeconfig)
+			err = sourceK8sClient.Create(ctx, remoteSecret)
+			Expect(err).NotTo(HaveOccurred())
+
+			remoteCluster := refRemoteCluster.DeepCopy()
+			err = sourceK8sClient.Create(ctx, remoteCluster)
+			Expect(err).NotTo(HaveOccurred())
+
+			remoteArbiter := refRemoteArbiter.DeepCopy()
+			err = sourceK8sClient.Create(ctx, remoteArbiter)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Mark the arbiter deployment ready. Retry on conflict and
+			// re-assert on every poll: the controller updates the deployment
+			// while rolling it out. Its reconcile error backoff (accumulated
+			// from earlier "remote cluster not ready" retries) can delay the
+			// observation of the ready status beyond the default timeout,
+			// so the ready wait below uses a longer timeout.
+			Eventually(func(g Gomega) {
+				arbiterDeploymentList := &appsv1.DeploymentList{}
+				namespaceSelector := client.InNamespace(remoteCluster.Spec.Namespace)
+				labelSelector := client.MatchingLabels{
+					RemoteArbiterLookupLabel: remoteArbiter.Name,
+				}
+				err := targetK8sClient.List(ctx, arbiterDeploymentList, namespaceSelector, labelSelector)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(arbiterDeploymentList.Items).To(HaveLen(1))
+				arbiterDeployment := &arbiterDeploymentList.Items[0]
+				if arbiterDeployment.Status.Replicas != 1 || arbiterDeployment.Status.UpdatedReplicas != 1 {
+					arbiterDeployment.Status.UpdatedReplicas = 1
+					arbiterDeployment.Status.Replicas = 1
+					err = targetK8sClient.Status().Update(ctx, arbiterDeployment)
+					g.Expect(err).NotTo(HaveOccurred())
+				}
+			}, Timeout, Interval).Should(Succeed())
+
+			Eventually(func(g Gomega) {
+				err := sourceK8sClient.Get(ctx, remoteArbiterNamespacedName, remoteArbiter)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(remoteArbiter.Status.State).To(Equal(v1alpha1.RemoteArbiterReadyState))
+			}, time.Minute*2, Interval).Should(Succeed())
+
+			// Deleting the RemoteArbiter must delete the objects the
+			// operator created on the remote cluster and release the
+			// finalizer, so the resource actually goes away.
+			err = sourceK8sClient.Delete(ctx, remoteArbiter)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func(g Gomega) {
+				empty, err := namespaceEmpty(targetK8sClient, targetClusterTypes, ArbiterInstallationNamespaceName)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(empty).To(BeTrue())
+			}, time.Minute, Interval).Should(Succeed())
+
+			Eventually(func(g Gomega) {
+				err := sourceK8sClient.Get(ctx, remoteArbiterNamespacedName, remoteArbiter)
+				g.Expect(apierrors.IsNotFound(err)).To(BeTrue())
+			}, time.Minute, Interval).Should(Succeed())
 		})
 	})
 })

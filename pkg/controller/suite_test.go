@@ -22,6 +22,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
@@ -118,6 +119,41 @@ func namespaceCleanUp(k8sClient client.Client, clusterTypes []client.Object, nam
 
 		for _, item := range objectList.Items {
 			if err = k8sClient.Delete(ctx, &item); err != nil {
+				return fmt.Errorf("unable to delete resource: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+// forceNamespaceCleanUp deletes all objects of the given types in the
+// namespace, removing finalizers first so objects whose controller failed
+// to release them (and are therefore stuck in Terminating) actually go away.
+// Conflicts are ignored: concurrent controller updates can race the
+// finalizer removal; callers that need convergence should retry.
+func forceNamespaceCleanUp(k8sClient client.Client, clusterTypes []client.Object, namespace string) error {
+	for _, clusterType := range clusterTypes {
+		gvk, err := k8sClient.GroupVersionKindFor(clusterType)
+		if err != nil {
+			return fmt.Errorf("unable to get gvk: %w", err)
+		}
+
+		objectList := &unstructured.UnstructuredList{}
+		objectList.SetGroupVersionKind(gvk)
+		err = k8sClient.List(ctx, objectList, &client.ListOptions{Namespace: namespace})
+		if err != nil {
+			return fmt.Errorf("unable to list resources: %w", err)
+		}
+
+		for _, item := range objectList.Items {
+			if len(item.GetFinalizers()) > 0 {
+				item.SetFinalizers(nil)
+				if err := k8sClient.Update(ctx, &item); err != nil &&
+					!apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
+					return fmt.Errorf("unable to remove finalizers: %w", err)
+				}
+			}
+			if err := k8sClient.Delete(ctx, &item); err != nil && !apierrors.IsNotFound(err) {
 				return fmt.Errorf("unable to delete resource: %w", err)
 			}
 		}
