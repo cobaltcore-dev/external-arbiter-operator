@@ -1027,6 +1027,17 @@ func (r *RemoteArbiterReconciler) fetchMonitorDeployment(ctx context.Context, s 
 		return errors.New("monitor deployments not found")
 	}
 
+	// The controller-runtime cache returns list items in Go map iteration
+	// order, which is randomized on every call. Sort by name (Rook mon IDs
+	// are single letters, so lexicographic order matches the mon ID order)
+	// to select the template monitor deterministically. Without this, every
+	// reconcile may clone a different monitor, the monitor deployment's
+	// resource version never matches the version stamped on the arbiter
+	// deployment, and the arbiter is perpetually regenerated.
+	slices.SortFunc(deploymentList.Items, func(a, b appsv1.Deployment) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+
 	s.monitorDeployment = &deploymentList.Items[0]
 
 	volumes := s.monitorDeployment.Spec.Template.Spec.Volumes
