@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"regexp"
 	"slices"
 	"strings"
+
 	"time"
 
 	"github.com/go-logr/logr"
@@ -600,6 +602,25 @@ func (r *RemoteArbiterReconciler) determinePublicAddress(s *RemoteArbiterReconci
 	}
 }
 
+// adminSocketPattern matches Ceph admin socket file names whose name embeds
+// a daemon ID, e.g. "ceph-mon.c.asok" or "rook-ceph-mon.a.asok". It is used
+// to retarget the cloned probes at the arbiter's own admin socket.
+var adminSocketPattern = regexp.MustCompile(`(mon|osd|mds|mgr|rbd-mirror|rgw|nfs|client)\.[A-Za-z0-9_.-]+\.asok`)
+
+// rewriteProbeSockets replaces any daemon admin socket reference in the
+// container's exec probes with the arbiter monitor's socket, e.g.
+// "/run/ceph/ceph-mon.c.asok" becomes "/run/ceph/ceph-mon.ext-a.asok".
+func rewriteProbeSockets(container *corev1.Container, monID string) {
+	for _, probe := range []*corev1.Probe{container.StartupProbe, container.LivenessProbe, container.ReadinessProbe} {
+		if probe == nil || probe.Exec == nil {
+			continue
+		}
+		for idx, part := range probe.Exec.Command {
+			probe.Exec.Command[idx] = adminSocketPattern.ReplaceAllString(part, "mon."+monID+".asok")
+		}
+	}
+}
+
 func (r *RemoteArbiterReconciler) modifyContainers(containers []corev1.Container, monID string, envVarSecretName string, publicAddress string) {
 	for containerIdx := range containers {
 		volumeMounts := containers[containerIdx].VolumeMounts
@@ -646,6 +667,14 @@ func (r *RemoteArbiterReconciler) modifyContainers(containers []corev1.Container
 		}
 
 		containers[containerIdx].Args = args
+
+		// The cloned spec's startup/liveness/readiness probes exec
+		// "ceph --admin-daemon /run/ceph/ceph-mon.<id>.asok ..." with the
+		// source monitor's ID embedded in the socket name. Rewrite them to
+		// the arbiter's own socket, otherwise the probes target a socket
+		// that never exists on the remote node and the arbiter pod can
+		// never become ready.
+		rewriteProbeSockets(&containers[containerIdx], monID)
 
 		hasPodIPEnvVar := false
 		envVars := containers[containerIdx].Env
@@ -1011,6 +1040,22 @@ func (r *RemoteArbiterReconciler) createArbiterService(ctx context.Context, s *R
 	return nil
 }
 
+// selectTemplateMonDeployment returns the deployment to clone the arbiter
+// from: the lexicographically first by name. The controller-runtime cache
+// returns list items in Go map iteration order, which is randomized on
+// every call, so sorting first makes the selection deterministic. Without
+// this, every reconcile may clone a different monitor, the monitor
+// deployment's resource version never matches the version stamped on the
+// arbiter deployment, and the arbiter is perpetually regenerated. Rook mon
+// IDs are single letters, so lexicographic order matches the mon ID order.
+// The slice must be non-empty.
+func selectTemplateMonDeployment(deployments []appsv1.Deployment) *appsv1.Deployment {
+	slices.SortFunc(deployments, func(a, b appsv1.Deployment) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	return &deployments[0]
+}
+
 func (r *RemoteArbiterReconciler) fetchMonitorDeployment(ctx context.Context, s *RemoteArbiterReconcilationState) error {
 	labelSelector := client.MatchingLabels{
 		"ceph_daemon_type":          "mon",
@@ -1027,7 +1072,7 @@ func (r *RemoteArbiterReconciler) fetchMonitorDeployment(ctx context.Context, s 
 		return errors.New("monitor deployments not found")
 	}
 
-	s.monitorDeployment = &deploymentList.Items[0]
+	s.monitorDeployment = selectTemplateMonDeployment(deploymentList.Items)
 
 	volumes := s.monitorDeployment.Spec.Template.Spec.Volumes
 
