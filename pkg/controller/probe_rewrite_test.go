@@ -4,7 +4,6 @@
 package controller
 
 import (
-	"slices"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -103,20 +102,5 @@ func TestRewriteProbeSockets(t *testing.T) {
 				t.Fatalf("container name must not change")
 			}
 		})
-	}
-}
-
-func TestFetchMonitorDeploymentSelectsDeterministically(t *testing.T) {
-	// fetchMonitorDeployment requires a live cluster; the deterministic
-	// selection itself is covered by asserting the sort order contract on
-	// the deployment list, which is what removes the map-iteration
-	// randomness. Full coverage happens in envtest with multiple mons.
-	names := []string{"rook-ceph-mon-c", "rook-ceph-mon-a", "rook-ceph-mon-b"}
-	want := "rook-ceph-mon-a"
-
-	sorted := append([]string(nil), names...)
-	slices.Sort(sorted)
-	if sorted[0] != want {
-		t.Fatalf("deterministic selection: expected %q to sort first, got %q", want, sorted[0])
 	}
 }

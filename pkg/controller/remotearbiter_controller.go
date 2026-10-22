@@ -1040,6 +1040,22 @@ func (r *RemoteArbiterReconciler) createArbiterService(ctx context.Context, s *R
 	return nil
 }
 
+// selectTemplateMonDeployment returns the deployment to clone the arbiter
+// from: the lexicographically first by name. The controller-runtime cache
+// returns list items in Go map iteration order, which is randomized on
+// every call, so sorting first makes the selection deterministic. Without
+// this, every reconcile may clone a different monitor, the monitor
+// deployment's resource version never matches the version stamped on the
+// arbiter deployment, and the arbiter is perpetually regenerated. Rook mon
+// IDs are single letters, so lexicographic order matches the mon ID order.
+// The slice must be non-empty.
+func selectTemplateMonDeployment(deployments []appsv1.Deployment) *appsv1.Deployment {
+	slices.SortFunc(deployments, func(a, b appsv1.Deployment) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	return &deployments[0]
+}
+
 func (r *RemoteArbiterReconciler) fetchMonitorDeployment(ctx context.Context, s *RemoteArbiterReconcilationState) error {
 	labelSelector := client.MatchingLabels{
 		"ceph_daemon_type":          "mon",
@@ -1056,18 +1072,7 @@ func (r *RemoteArbiterReconciler) fetchMonitorDeployment(ctx context.Context, s 
 		return errors.New("monitor deployments not found")
 	}
 
-	// The controller-runtime cache returns list items in Go map iteration
-	// order, which is randomized on every call. Sort by name (Rook mon IDs
-	// are single letters, so lexicographic order matches the mon ID order)
-	// to select the template monitor deterministically. Without this, every
-	// reconcile may clone a different monitor, the monitor deployment's
-	// resource version never matches the version stamped on the arbiter
-	// deployment, and the arbiter is perpetually regenerated.
-	slices.SortFunc(deploymentList.Items, func(a, b appsv1.Deployment) int {
-		return strings.Compare(a.Name, b.Name)
-	})
-
-	s.monitorDeployment = &deploymentList.Items[0]
+	s.monitorDeployment = selectTemplateMonDeployment(deploymentList.Items)
 
 	volumes := s.monitorDeployment.Spec.Template.Spec.Volumes
 
