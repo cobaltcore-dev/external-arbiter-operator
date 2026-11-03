@@ -19,9 +19,11 @@ import (
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -56,6 +58,11 @@ type RemoteClusterReconcilationState struct {
 type RemoteClusterReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+
+	// RateLimiter optionally overrides the rate limiter of the controller
+	// workqueue. It allows tests to bound the exponential backoff applied to
+	// failed reconciles; when nil, the controller-runtime default is used.
+	RateLimiter workqueue.TypedRateLimiter[reconcile.Request]
 }
 
 func (r *RemoteClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -552,15 +559,20 @@ func (r *RemoteClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
+	controllerBuilder := ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.RemoteCluster{}).
 		Named(RemoteClusterTypeName).
 		Watches(
 			&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(r.findClusterForSecret),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
-		).
-		Complete(r)
+		)
+
+	if r.RateLimiter != nil {
+		controllerBuilder = controllerBuilder.WithOptions(controller.Options{RateLimiter: r.RateLimiter})
+	}
+
+	return controllerBuilder.Complete(r)
 }
 
 func (r *RemoteClusterReconciler) findClusterForSecret(ctx context.Context, object client.Object) []reconcile.Request {
