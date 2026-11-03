@@ -25,9 +25,11 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -98,6 +100,11 @@ type RemoteArbiterReconcilationState struct {
 type RemoteArbiterReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+
+	// RateLimiter optionally overrides the rate limiter of the controller
+	// workqueue. It allows tests to bound the exponential backoff applied to
+	// failed reconciles; when nil, the controller-runtime default is used.
+	RateLimiter workqueue.TypedRateLimiter[reconcile.Request]
 }
 
 func (r *RemoteArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -447,11 +454,22 @@ func (r *RemoteArbiterReconciler) checkArbiterDeploymentUpToDate(ctx context.Con
 	// the desired address with the address applied to the deployment and
 	// rebuild the deployment spec when they differ, so that the arbiter mon
 	// does not keep advertising a stale address in the monmap indefinitely.
+	appliedPublicAddress := deploymentPublicAddress(s.arbiterDeployment)
 	desiredPublicAddress, err := r.determinePublicAddress(s)
 	if err != nil {
-		return fmt.Errorf("unable to determine desired public address: %w", err)
+		if !errors.Is(err, errLoadBalancerAddressNotAllocated) {
+			return fmt.Errorf("unable to determine desired public address: %w", err)
+		}
+		// While the load balancer ingress address is not allocated yet the
+		// desired public address is unknown. Keep the address applied to the
+		// deployment instead of failing the reconcile, which would requeue
+		// with exponential backoff and starve the periodic check interval.
+		// Once the ingress address is allocated this check is re-evaluated
+		// on the next periodic reconcile and the deployment is rebuilt.
+		s.log.Info("load balancer ingress address is not yet allocated, keeping the public address applied to the deployment",
+			"applied", appliedPublicAddress)
+		desiredPublicAddress = appliedPublicAddress
 	}
-	appliedPublicAddress := deploymentPublicAddress(s.arbiterDeployment)
 	if desiredPublicAddress != appliedPublicAddress {
 		s.log.Info("arbiter deployment public address is outdated",
 			"desired", desiredPublicAddress, "applied", appliedPublicAddress)
@@ -522,7 +540,18 @@ func (r *RemoteArbiterReconciler) makeDeploymentSpec(s *RemoteArbiterReconcilati
 
 	publicAddress, err := r.determinePublicAddress(s)
 	if err != nil {
-		return fmt.Errorf("unable to determine public address: %w", err)
+		// While the load balancer ingress address is not allocated yet, keep
+		// the public address applied to the existing deployment, so that the
+		// rest of the spec can still be updated and the arbiter mon keeps
+		// advertising a valid address. New deployments have no address
+		// applied yet and keep waiting for the ingress address to be
+		// allocated.
+		if !errors.Is(err, errLoadBalancerAddressNotAllocated) || deploymentPublicAddress(s.arbiterDeployment) == "" {
+			return fmt.Errorf("unable to determine public address: %w", err)
+		}
+		publicAddress = deploymentPublicAddress(s.arbiterDeployment)
+		s.log.Info("load balancer ingress address is not yet allocated, keeping the public address applied to the deployment",
+			"publicAddress", publicAddress)
 	}
 
 	monID := s.remoteArbiter.Status.MonID
@@ -592,6 +621,13 @@ func (r *RemoteArbiterReconciler) makeDeploymentSpec(s *RemoteArbiterReconcilati
 	return nil
 }
 
+// errLoadBalancerAddressNotAllocated is returned by determinePublicAddress
+// while the load balancer ingress address of the arbiter service has not
+// been allocated yet. It is handled gracefully by the callers: the public
+// address currently applied to the arbiter deployment is kept until the
+// ingress address is allocated and the deployment is rebuilt.
+var errLoadBalancerAddressNotAllocated = errors.New("service load balancer ip is not yet allocated")
+
 func (r *RemoteArbiterReconciler) determinePublicAddress(s *RemoteArbiterReconcilationState) (string, error) {
 	if s.arbiterService == nil {
 		return "$(ROOK_POD_IP)", nil
@@ -607,7 +643,7 @@ func (r *RemoteArbiterReconciler) determinePublicAddress(s *RemoteArbiterReconci
 		return s.remoteArbiter.Spec.Service.NodeIP, nil
 	case corev1.ServiceTypeLoadBalancer:
 		if len(s.arbiterService.Status.LoadBalancer.Ingress) == 0 {
-			return "", errors.New("service load balancer ip is not yet allocated")
+			return "", errLoadBalancerAddressNotAllocated
 		}
 		for _, ingress := range s.arbiterService.Status.LoadBalancer.Ingress {
 			parsedIP, err := netip.ParseAddr(ingress.IP)
@@ -887,6 +923,9 @@ func (r *RemoteArbiterReconciler) fetchArbiterDeployment(ctx context.Context, s 
 		case 1:
 			s.arbiterService = &serviceList.Items[0]
 			s.arbiterServiceObjectKey = ObjectKeyFromObject(s.arbiterService)
+			if err := r.reconcileArbiterService(ctx, s); err != nil {
+				return fmt.Errorf("unable to reconcile service: %w", err)
+			}
 		default:
 			return fmt.Errorf("expected to get 1 service, but got %d", arbiterServiceCount)
 		}
@@ -1007,6 +1046,88 @@ func (r *RemoteArbiterReconciler) createArbiterDeployment(ctx context.Context, s
 	return nil
 }
 
+// arbiterServicePorts returns the ports of the arbiter service. The ports
+// are the Ceph messenger ports and never change. For NodePort services the
+// node ports are pinned to the same values: the public address advertised to
+// Ceph is a bare node IP, the arbiter mon announces ports 3300 (v2) and 6789
+// (v1), so the traffic to those ports must be forwarded by the service,
+// which requires the target cluster kube-apiserver service node port range
+// to include them.
+func arbiterServicePorts(serviceType corev1.ServiceType) []corev1.ServicePort {
+	ports := []corev1.ServicePort{
+		{
+			Name:       "tcp-msgr1",
+			Port:       6789,
+			Protocol:   corev1.ProtocolTCP,
+			TargetPort: intstr.FromInt32(6789),
+		},
+		{
+			Name:       "tcp-msgr2",
+			Port:       3300,
+			Protocol:   corev1.ProtocolTCP,
+			TargetPort: intstr.FromInt32(3300),
+		},
+	}
+	if serviceType == corev1.ServiceTypeNodePort {
+		for idx := range ports {
+			ports[idx].NodePort = ports[idx].Port
+		}
+	}
+	return ports
+}
+
+// reconcileArbiterService repairs the arbiter service found on the target
+// cluster when it drifted from the desired configuration. A service created
+// by an older operator version may have a wrong type (issue #86) or, for
+// NodePort services, dynamically allocated node ports instead of the pinned
+// Ceph messenger ports. Transitions between ClusterIP, NodePort and
+// LoadBalancer are legal in-place service updates, so the service is updated
+// instead of recreated: its name and cluster IP stay stable, and the arbiter
+// deployment is rebuilt by the public address drift check when the derived
+// address changes.
+func (r *RemoteArbiterReconciler) reconcileArbiterService(ctx context.Context, s *RemoteArbiterReconcilationState) error {
+	desiredType := s.remoteArbiter.Spec.Service.Type
+	serviceUpdated := false
+
+	if s.arbiterService.Spec.Type != desiredType {
+		s.arbiterService.Spec.Type = desiredType
+		serviceUpdated = true
+	}
+
+	for idx := range s.arbiterService.Spec.Ports {
+		switch desiredType {
+		case corev1.ServiceTypeNodePort:
+			// Pin the node port to the service port so that the advertised
+			// node IP is reachable on the ports the arbiter mon announces.
+			if s.arbiterService.Spec.Ports[idx].NodePort != s.arbiterService.Spec.Ports[idx].Port {
+				s.arbiterService.Spec.Ports[idx].NodePort = s.arbiterService.Spec.Ports[idx].Port
+				serviceUpdated = true
+			}
+		case corev1.ServiceTypeLoadBalancer:
+			// Keep the node ports allocated by the API server: the traffic
+			// reaches the service through the load balancer.
+		default:
+			// ClusterIP services must not have node ports set, clearing them
+			// is required to make a NodePort to ClusterIP transition valid.
+			if s.arbiterService.Spec.Ports[idx].NodePort != 0 {
+				s.arbiterService.Spec.Ports[idx].NodePort = 0
+				serviceUpdated = true
+			}
+		}
+	}
+
+	if !serviceUpdated {
+		return nil
+	}
+
+	s.log.Info("arbiter service is outdated")
+	if err := s.remoteClusterClient.Update(ctx, s.arbiterService); err != nil {
+		return fmt.Errorf("unable to update resource %s %s: %w", ServiceTypeName, s.arbiterServiceObjectKey, err)
+	}
+
+	return nil
+}
+
 func (r *RemoteArbiterReconciler) createArbiterService(ctx context.Context, s *RemoteArbiterReconcilationState) error {
 	trafficPolicy := corev1.ServiceInternalTrafficPolicyCluster
 	ipPolicy := corev1.IPFamilyPolicySingleStack
@@ -1021,21 +1142,8 @@ func (r *RemoteArbiterReconciler) createArbiterService(ctx context.Context, s *R
 			Finalizers: []string{RemoteArbiterFinalizer},
 		},
 		Spec: corev1.ServiceSpec{
-			Type: s.remoteArbiter.Spec.Service.Type,
-			Ports: []corev1.ServicePort{
-				{
-					Name:       "tcp-msgr1",
-					Port:       6789,
-					Protocol:   corev1.ProtocolTCP,
-					TargetPort: intstr.FromInt32(6789),
-				},
-				{
-					Name:       "tcp-msgr2",
-					Port:       3300,
-					Protocol:   corev1.ProtocolTCP,
-					TargetPort: intstr.FromInt32(3300),
-				},
-			},
+			Type:  s.remoteArbiter.Spec.Service.Type,
+			Ports: arbiterServicePorts(s.remoteArbiter.Spec.Service.Type),
 			Selector: map[string]string{
 				RemoteArbiterLookupLabel: s.remoteArbiter.Name,
 			},
@@ -1672,7 +1780,7 @@ func (r *RemoteArbiterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return fmt.Errorf("unable to create index: %w", err)
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
+	controllerBuilder := ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.RemoteArbiter{}).
 		Named(RemoteArbiterTypeName).
 		Owns(&v1alpha1.RemoteCluster{}).
@@ -1700,8 +1808,13 @@ func (r *RemoteArbiterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&rookv1.CephCluster{},
 			handler.EnqueueRequestsFromMapFunc(r.findArbiterForRemoteCluster),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
-		).
-		Complete(r)
+		)
+
+	if r.RateLimiter != nil {
+		controllerBuilder = controllerBuilder.WithOptions(controller.Options{RateLimiter: r.RateLimiter})
+	}
+
+	return controllerBuilder.Complete(r)
 }
 
 func (r *RemoteArbiterReconciler) findArbiterForCephClusterOwnedObject(ctx context.Context, obj client.Object) []reconcile.Request {
