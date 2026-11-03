@@ -72,12 +72,15 @@ type RemoteClusterConfiguration struct {
 // ServiceConfiguration allows to configure Service
 type ServiceConfiguration struct {
 	// Type allows to select service type
+	// +kubebuilder:validation:Enum=ClusterIP;NodePort;LoadBalancer
 	// +default="ClusterIP"
 	// +example="ClusterIP"
 	// +optional
 	Type corev1.ServiceType `json:"type,omitempty"`
 
-	// NodeIP is used to specify externally resolvable node IPv4 if NodePort service type is used
+	// NodeIP is used to specify externally resolvable node IPv4 if NodePort service type is used.
+	// For NodePort services the node ports are pinned to the Ceph messenger ports (3300 and 6789),
+	// so the kube-apiserver service node port range of the target cluster must include those ports.
 	// +default=""
 	// +example="10.10.0.1"
 	// +optional

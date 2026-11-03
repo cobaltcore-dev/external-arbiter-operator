@@ -243,6 +243,22 @@ var _ = Describe("RemoteArbiter Webhook", func() {
 					},
 					MonIDPrefix: "normal",
 				},
+				{
+					CheckInterval: &v1alpha1.Interval{
+						Duration: 0,
+					},
+					CephCluster: v1alpha1.NamespacedReference{
+						Name:      "normal",
+						Namespace: "normal",
+					},
+					RemoteCluster: v1alpha1.RemoteClusterConfiguration{
+						Name: "normal",
+					},
+					Service: &v1alpha1.ServiceConfiguration{
+						Type: corev1.ServiceTypeExternalName,
+					},
+					MonIDPrefix: "normal",
+				},
 			}
 
 			for idx, invalidSpec := range invalidSpecs {
@@ -355,6 +371,22 @@ var _ = Describe("RemoteArbiter Webhook", func() {
 					Service: &v1alpha1.ServiceConfiguration{
 						Type:   corev1.ServiceTypeNodePort,
 						NodeIP: "10.10.0.1",
+					},
+					MonIDPrefix: "normal",
+				},
+				{
+					CheckInterval: &v1alpha1.Interval{
+						Duration: 0,
+					},
+					CephCluster: v1alpha1.NamespacedReference{
+						Name:      "normal",
+						Namespace: "normal",
+					},
+					RemoteCluster: v1alpha1.RemoteClusterConfiguration{
+						Name: "normal",
+					},
+					Service: &v1alpha1.ServiceConfiguration{
+						Type: corev1.ServiceTypeLoadBalancer,
 					},
 					MonIDPrefix: "normal",
 				},

@@ -13,6 +13,7 @@ const (
 	SecretTypeName        = "secret"
 	ConfigMapTypeName     = "configmap"
 	DeploymentTypeName    = "deployment"
+	ServiceTypeName       = "service"
 	RemoteClusterTypeName = "remotecluster"
 	RemoteArbiterTypeName = "remotearbiter"
 
