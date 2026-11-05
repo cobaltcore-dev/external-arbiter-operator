@@ -680,6 +680,8 @@ func rewriteProbeSockets(container *corev1.Container, monID string) {
 			probe.Exec.Command[idx] = adminSocketPattern.ReplaceAllString(part, "mon."+monID+".asok")
 		}
 	}
+}
+
 // deploymentPublicAddress returns the public address currently applied to the
 // arbiter deployment, as written into the "--public-addr=" container argument
 // by makeDeploymentSpec. It returns an empty string when no such argument is
