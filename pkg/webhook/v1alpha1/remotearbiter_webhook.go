@@ -57,6 +57,12 @@ func (r *RemoteArbiterCustomDefaulter) Default(_ context.Context, remoteArbiter 
 		setRemoteClusterSpecDefaults(remoteArbiter.Spec.RemoteCluster.Spec, remoteArbiter.Name)
 	}
 
+	if remoteArbiter.Spec.Service == nil {
+		remoteArbiter.Spec.Service = &v1alpha1.ServiceConfiguration{
+			Type: corev1.ServiceTypeClusterIP,
+		}
+	}
+
 	return nil
 }
 
@@ -158,21 +164,29 @@ func validateRemoteArbiterSpec(remoteArbiterSpec *v1alpha1.RemoteArbiterSpec, ro
 	}
 
 	if remoteArbiterSpec.Service != nil {
-		if len(remoteArbiterSpec.Service.Type) == 0 {
+		switch remoteArbiterSpec.Service.Type {
+		case corev1.ServiceTypeClusterIP, corev1.ServiceTypeNodePort, corev1.ServiceTypeLoadBalancer:
+		case "":
 			validationErrors = append(validationErrors, field.Invalid(
 				rootPath.Child("service", "type"), remoteArbiterSpec.Service.Type, "service type should not be empty"))
+		default:
+			validationErrors = append(validationErrors, field.NotSupported(
+				rootPath.Child("service", "type"), remoteArbiterSpec.Service.Type,
+				[]string{
+					string(corev1.ServiceTypeClusterIP),
+					string(corev1.ServiceTypeNodePort),
+					string(corev1.ServiceTypeLoadBalancer),
+				}))
 		}
 
 		if remoteArbiterSpec.Service.Type == corev1.ServiceTypeNodePort {
 			parsedIP, err := netip.ParseAddr(remoteArbiterSpec.Service.NodeIP)
 			if err != nil {
 				validationErrors = append(validationErrors, field.Invalid(
-					rootPath.Child("service", "nodeIp"), remoteArbiterSpec.Service.Type, err.Error()))
-			}
-
-			if !parsedIP.Is4() {
+					rootPath.Child("service", "nodeIp"), remoteArbiterSpec.Service.NodeIP, err.Error()))
+			} else if !parsedIP.Is4() {
 				validationErrors = append(validationErrors, field.Invalid(
-					rootPath.Child("service", "nodeIp"), remoteArbiterSpec.Service.Type, "should be IPv4 address"))
+					rootPath.Child("service", "nodeIp"), remoteArbiterSpec.Service.NodeIP, "should be IPv4 address"))
 			}
 		}
 	}

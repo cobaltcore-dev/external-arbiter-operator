@@ -1117,12 +1117,18 @@ spec:
                 properties:
                   nodeIp:
                     default: ""
-                    description: NodeIP is used to specify externally resolvable node
-                      IPv4 if NodePort service type is used
+                    description: |-
+                      NodeIP is used to specify externally resolvable node IPv4 if NodePort service type is used.
+                      For NodePort services the node ports are pinned to the Ceph messenger ports (3300 and 6789),
+                      so the kube-apiserver service node port range of the target cluster must include those ports.
                     type: string
                   type:
                     default: ClusterIP
                     description: Type allows to select service type
+                    enum:
+                    - ClusterIP
+                    - NodePort
+                    - LoadBalancer
                     type: string
                 type: object
             required:

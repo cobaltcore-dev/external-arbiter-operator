@@ -27,11 +27,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -153,7 +155,17 @@ var _ = BeforeSuite(func() {
 		ErrorIfCRDPathMissing: true,
 	}
 
-	targetClusterTestEnv = &envtest.Environment{}
+	// The arbiter service pins its node ports to the Ceph messenger ports
+	// 3300 and 6789 for NodePort services, which are outside the default
+	// service node port range, so the range is widened to be able to test
+	// NodePort services.
+	targetClusterTestEnv = &envtest.Environment{
+		ControlPlane: envtest.ControlPlane{
+			APIServer: &envtest.APIServer{
+				Args: []string{"--service-node-port-range=3000-32767"},
+			},
+		},
+	}
 
 	// Retrieve the first found binary directory to allow running tests from IDEs
 	envTestBinaryDir := getFirstFoundEnvTestBinaryDir()
@@ -184,9 +196,16 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).ToNot(HaveOccurred())
 
+	// Bound the exponential backoff of failed reconciles: transient errors
+	// like "remote cluster not ready" during cold start are returned as
+	// reconcile errors and would otherwise grow the workqueue backoff past
+	// the test timeouts after a series of failures, starving the convergence
+	// assertions of reconcile attempts.
 	remoteClusterReconciler := &RemoteClusterReconciler{
 		Client: sourceK8sManager.GetClient(),
 		Scheme: sourceK8sManager.GetScheme(),
+		RateLimiter: workqueue.NewTypedItemExponentialFailureRateLimiter[reconcile.Request](
+			time.Millisecond, 10*time.Millisecond),
 	}
 	err = remoteClusterReconciler.SetupWithManager(sourceK8sManager)
 	Expect(err).NotTo(HaveOccurred())
@@ -194,6 +213,8 @@ var _ = BeforeSuite(func() {
 	remoteArbiterReconciler := &RemoteArbiterReconciler{
 		Client: sourceK8sManager.GetClient(),
 		Scheme: sourceK8sManager.GetScheme(),
+		RateLimiter: workqueue.NewTypedItemExponentialFailureRateLimiter[reconcile.Request](
+			time.Millisecond, 10*time.Millisecond),
 	}
 	err = remoteArbiterReconciler.SetupWithManager(sourceK8sManager)
 	Expect(err).NotTo(HaveOccurred())
