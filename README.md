@@ -59,6 +59,8 @@ A quick walkthrough on how to prepare environment, run operator locally and depl
 make deps
 # create osd for ceph
 limactl disk create osd --size=8G
+limactl disk create osd2 --size=8G
+limactl disk create osd3 --size=8G
 # create vm instance
 limactl create --name=k8s ./contrib/vm.yaml
 # start vm
@@ -74,6 +76,8 @@ kubectl apply -f ./rook/deploy/examples/operator.yaml
 kubectl apply -f ./rook/deploy/examples/csi-operator.yaml
 # create ceph cluster 
 kubectl apply -f ./rook/deploy/examples/cluster-test.yaml
+# scale test cluster to three monitors
+kubectl -n rook-ceph patch cephcluster my-cluster --type=merge -p '{"spec":{"mon":{"count":3}}}'
 # (optional) install ceph toolbox
 kubectl apply -f ./rook/deploy/examples/toolbox.yaml
 # build image 

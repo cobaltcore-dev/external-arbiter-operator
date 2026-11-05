@@ -5,6 +5,10 @@ disk: 80GiB
 additionalDisks:
   - name: osd
     format: false
+  - name: osd2
+    format: false
+  - name: osd3
+    format: false
 memory: 8GiB
 
 portForwards:
