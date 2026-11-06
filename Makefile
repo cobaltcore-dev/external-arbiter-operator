@@ -81,6 +81,11 @@ deps:
 test: pretty env deps
 	go test ./...
 
+.PHONY: test-tools
+test-tools:
+	@command -v bats >/dev/null 2>&1 || { echo "bats-core not found. Install: brew install bats-core"; exit 1; }
+	bats contrib/tools/tests/
+
 .PHONY: clean
 clean:
 	rm -rf build/

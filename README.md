@@ -57,8 +57,10 @@ A quick walkthrough on how to prepare environment, run operator locally and depl
 ```bash
 # clone rook repo if not yet done
 make deps
-# create osd for ceph
+# create osds for ceph
 limactl disk create osd --size=8G
+limactl disk create osd2 --size=8G
+
 # create vm instance
 limactl create --name=k8s ./contrib/vm.yaml
 # start vm
@@ -94,13 +96,25 @@ kubectl apply -f ./contrib/k8s/examples/remote-arbiter.yaml -n arbiter-operator
 kubectl get remotearbiter -n arbiter-operator -w
 # check arbiter joined quorum
 kubectl exec deployment/rook-ceph-tools -n rook-ceph -it -- ceph mon dump
+# (optional) deploy object store (RGW) and S3 user for traffic testing
+kubectl apply -f ./contrib/k8s/examples/object-store.yaml
+kubectl apply -f ./contrib/k8s/examples/object-store-user.yaml
+# wait for RGW to be ready
+kubectl wait --for=jsonpath='{.status.phase}'=Ready cephobjectstore/my-store -n rook-ceph --timeout=300s
+kubectl wait --for=create secret/rook-ceph-object-user-my-store-test-user -n rook-ceph --timeout=300s
 # enable cilium monitoring
 limactl shell k8s cilium hubble enable
 limactl shell k8s cilium hubble port-forward &
 # show cilium status
 limactl shell k8s cilium status
 # observe external-arbiter
-limactl shell k8s hubble observe --to-label ceph.cobaltcore.sap.com/lookup=external-arbiter -n external-arbiter
+limactl shell k8s hubble observe --to-label k8s:ceph.cobaltcore.sap.com/lookup=external-arbiter -n external-arbiter
+# run S3 bench (write + read + verify 50 objects)
+# NOTE: arbiter-s3-bench is for local development only (Lima VM).
+#       Do NOT run against production systems.
+limactl shell k8s bash ./contrib/tools/arbiter-s3-bench --verify
+# run S3 bench in loop mode (continuous traffic until Ctrl+C)
+limactl shell k8s bash ./contrib/tools/arbiter-s3-bench --loop
 # remove chart
 helm uninstall --namespace arbiter-operator arbiter-operator
 # stop vm
@@ -137,6 +151,8 @@ Following examples are provided:
 - [secret.yaml](./contrib/k8s/examples/secret.yaml) for arbiter installation kubeconfig secret
 - [remote-cluster.yaml](./contrib/k8s/examples/remote-cluster.yaml) for RemoteCluster resource
 - [remote-arbiter.yaml](./contrib/k8s/examples/remote-arbiter.yaml) for RemoteArbiter resource
+- [object-store.yaml](./contrib/k8s/examples/object-store.yaml) for CephObjectStore (RGW)
+- [object-store-user.yaml](./contrib/k8s/examples/object-store-user.yaml) for CephObjectStoreUser (S3 credentials)
 
 ### How to run
 
