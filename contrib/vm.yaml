@@ -5,6 +5,8 @@ disk: 80GiB
 additionalDisks:
   - name: osd
     format: false
+  - name: osd2
+    format: false
 memory: 8GiB
 
 portForwards:
@@ -107,6 +109,12 @@ provision:
       (cd "${tmpdir}" && sha256sum --check "hubble-linux-${HUBBLE_ARCH}.tar.gz.sha256sum")
       tar xzvf "${tmpdir}/hubble-linux-${HUBBLE_ARCH}.tar.gz" -C /usr/local/bin
       rm -rf "${tmpdir}"
+    fi
+    # Install AWS CLI (S3 client for RGW testing)
+    if ! command -v aws >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y awscli
     fi
 
 - mode: system
