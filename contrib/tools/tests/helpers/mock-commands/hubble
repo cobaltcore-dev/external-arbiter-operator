@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
+# SPDX-License-Identifier: Apache-2.0
+# Mock hubble - logs calls and returns configurable output/exit status.
+echo "hubble $*" >> "${MOCK_HUBBLE_CALL_LOG:-/dev/null}"
+
+# Follow mode: block until killed (like real hubble --follow)
+if [[ "$*" == *"--follow"* ]]; then
+  if [[ -n "${MOCK_HUBBLE_OUTPUT:-}" ]]; then
+    printf '%s\n' "$MOCK_HUBBLE_OUTPUT"
+  fi
+  # Sleep to simulate blocking; tests will kill this process
+  sleep 60 &
+  wait $! 2>/dev/null || true
+  exit 0
+fi
+
+# Support per-destination-port output via MOCK_HUBBLE_TO_PORT_<port>_OUTPUT
+# for "hubble observe ... --to-port <port> ..." (e.g. separate fixtures for
+# msgr2:3300 and msgr1:6789 captures). Falls through when unset.
+_prev=""
+for _arg in "$@"; do
+  if [[ "$_prev" == "--to-port" && -n "$_arg" ]]; then
+    _var="MOCK_HUBBLE_TO_PORT_${_arg}_OUTPUT"
+    if [[ -n "${!_var:-}" ]]; then
+      printf '%s\n' "${!_var}"
+      exit "${MOCK_HUBBLE_EXIT:-0}"
+    fi
+  fi
+  _prev="$_arg"
+done
+
+# Support separate exit/output for --from-label vs --to-label
+if [[ "$*" == *"--from-label"* && -n "${MOCK_HUBBLE_FROM_EXIT:-}" ]]; then
+  if [[ -n "${MOCK_HUBBLE_FROM_OUTPUT:-}" ]]; then
+    printf '%s\n' "$MOCK_HUBBLE_FROM_OUTPUT"
+  fi
+  exit "${MOCK_HUBBLE_FROM_EXIT}"
+fi
+
+if [[ -n "${MOCK_HUBBLE_OUTPUT:-}" ]]; then
+  # MOCK_HUBBLE_NO_TRAILING_NEWLINE=1 emits output without a final
+  # newline (some hubble builds omit it on the last JSON line) to
+  # exercise newline-tolerant flow counting.
+  if [[ "${MOCK_HUBBLE_NO_TRAILING_NEWLINE:-}" == "1" ]]; then
+    printf '%s' "$MOCK_HUBBLE_OUTPUT"
+  else
+    printf '%s\n' "$MOCK_HUBBLE_OUTPUT"
+  fi
+fi
+exit "${MOCK_HUBBLE_EXIT:-0}"

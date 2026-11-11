@@ -129,4 +129,4 @@ data:
   kubeconfig.yaml: ${kubeconfig}
 EOF
 )
-echo "$secret" > ./contrib/k8s/examples/secret.yaml
+echo "$secret" > /tmp/secret.yaml

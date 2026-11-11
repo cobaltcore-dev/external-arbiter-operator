@@ -1,0 +1,45 @@
+# Copyright 2025 SAP SE or an SAP affiliate company and cobaltcore-dev contributors
+# SPDX-License-Identifier: Apache-2.0
+# CephObjectStore (RGW) for the RGW-chaos extension of the quorum harness.
+#
+# This is the DATA PLANE under test: arbiter-s3-bench pushes read/write/list
+# traffic at this store's RGW gateway while the chaos steps (71..77) inject mon
+# / arbiter faults. The harness then asserts whether S3 traffic was interrupted.
+#
+# Pools are replicated size 1 to fit the harness's minimal loopback-OSD floor
+# (1 OSD per node). This is NOT a data-redundancy test — the arbiter restores
+# control-plane quorum, not OSD redundancy (see README "Scope"). size 1 keeps
+# the store schedulable on a laptop-scale cluster.
+apiVersion: ceph.rook.io/v1
+kind: CephObjectStore
+metadata:
+  name: my-store
+  namespace: rook-ceph
+spec:
+  metadataPool:
+    replicated:
+      size: 1
+      requireSafeReplicaSize: false
+  dataPool:
+    replicated:
+      size: 1
+      requireSafeReplicaSize: false
+  preservePoolsOnDelete: false
+  gateway:
+    port: 80
+    instances: 1
+    resources:
+      requests: { cpu: "100m", memory: "256Mi" }
+      limits: { memory: "1Gi" }
+---
+# S3 user. The operator-independent arbiter-s3-bench tool reads credentials from
+# the Secret Rook generates for this user:
+#   rook-ceph-object-user-my-store-test-user  (keys: AccessKey / SecretKey)
+apiVersion: ceph.rook.io/v1
+kind: CephObjectStoreUser
+metadata:
+  name: test-user
+  namespace: rook-ceph
+spec:
+  store: my-store
+  displayName: "Arbiter RGW chaos test user"

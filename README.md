@@ -57,7 +57,7 @@ A quick walkthrough on how to prepare environment, run operator locally and depl
 ```bash
 # clone rook repo if not yet done
 make deps
-# create osd for ceph
+# create osds for ceph
 limactl disk create osd --size=8G
 limactl disk create osd2 --size=8G
 limactl disk create osd3 --size=8G
@@ -98,20 +98,85 @@ kubectl apply -f ./contrib/k8s/examples/remote-arbiter.yaml -n arbiter-operator
 kubectl get remotearbiter -n arbiter-operator -w
 # check arbiter joined quorum
 kubectl exec deployment/rook-ceph-tools -n rook-ceph -it -- ceph mon dump
+# (optional) deploy object store (RGW) and S3 user for traffic testing
+kubectl apply -f ./contrib/k8s/examples/object-store.yaml
+kubectl apply -f ./contrib/k8s/examples/object-store-user.yaml
+# wait for RGW to be ready
+kubectl wait --for=jsonpath='{.status.phase}'=Ready cephobjectstore/my-store -n rook-ceph --timeout=300s
+kubectl wait --for=create secret/rook-ceph-object-user-my-store-test-user -n rook-ceph --timeout=300s
 # enable cilium monitoring
 limactl shell k8s cilium hubble enable
 limactl shell k8s cilium hubble port-forward &
 # show cilium status
 limactl shell k8s cilium status
 # observe external-arbiter
-limactl shell k8s hubble observe --to-label ceph.cobaltcore.sap.com/lookup=external-arbiter -n external-arbiter
-# remove chart
-helm uninstall --namespace arbiter-operator arbiter-operator
+limactl shell k8s hubble observe --to-label k8s:ceph.cobaltcore.sap.com/lookup=external-arbiter -n external-arbiter
+# run S3 bench (write + read + verify 50 objects)
+# NOTE: arbiter-s3-bench is for local development only (Lima VM).
+#       Do NOT run against production systems.
+limactl shell k8s bash ./contrib/tools/arbiter-s3-bench --verify
+# run S3 bench in loop mode (continuous traffic until Ctrl+C)
+limactl shell k8s bash ./contrib/tools/arbiter-s3-bench --loop
+# remove the arbiter and the chart (do NOT just uninstall the chart — see
+# "Clean up / Remove the arbiter" below for why and for the full sequence)
 # stop vm
 limactl stop k8s
 # delete vm
 limactl delete k8s
 ```
+
+### Clean up / Remove the arbiter
+
+The arbiter's cleanup is finalizer-based and operator-driven: the `RemoteArbiter`
+and `RemoteCluster` resources, the arbiter objects on the remote cluster, and
+the external mon id in `CephCluster.spec.mon.externalMonIDs` are only released
+by the running operator. Uninstalling the chart first therefore leaves the CRs
+and the remote arbiter objects stuck in `Terminating` (their finalizers can
+never be processed) and the arbiter mon as a stale member of the Ceph monmap.
+Always remove the resources first, then the chart:
+
+```bash
+# 1) delete the RemoteArbiter and wait until it is fully removed
+kubectl --namespace arbiter-operator delete remotearbiter external-arbiter
+kubectl --namespace arbiter-operator get remotearbiter --watch
+```
+
+During this step the operator deletes the arbiter objects in the remote cluster
+namespace (everything labelled
+`ceph.cobaltcore.sap.com/lookup=external-arbiter`) and releases the external
+mon id from `CephCluster.spec.mon.externalMonIDs`.
+
+```bash
+# 2) verify the cleanup actually succeeded
+kubectl --namespace external-arbiter get deploy,svc,secret,configmap \
+  --selector ceph.cobaltcore.sap.com/lookup=external-arbiter   # expect: no resources found
+kubectl --namespace rook-ceph get cephcluster \
+  --output jsonpath='{.items[*].spec.mon.externalMonIDs}'       # expect: []
+
+# 3) remove the arbiter mon from the Ceph monmap (not done by the operator)
+kubectl --namespace rook-ceph exec deployment/rook-ceph-tools -- ceph mon remove ext-a
+
+# 4) delete the RemoteCluster and wait until it is fully removed
+kubectl --namespace arbiter-operator delete remotecluster external-arbiter
+kubectl --namespace arbiter-operator get remotecluster --watch
+
+# 5) remove the chart
+helm uninstall --namespace arbiter-operator arbiter-operator
+```
+
+Notes:
+
+- Step 3 is required because the operator only releases the mon id from
+  `ExternalMonIDs`; it does not run `ceph mon remove`. While the monmap still
+  lists the arbiter, quorum is computed over all monmap members (e.g. 3 of 4
+  with the arbiter present), so a stale entry reduces your failure margin.
+- If step 2 reports leftover objects, the remote cluster was not reachable
+  during deletion and the remote cleanup was skipped. Remove the
+  `remotearbiter.ceph.cobaltcore.sap.com/finalizer` finalizer from the leftover
+  objects manually and delete them, then continue with step 3.
+- The quick-start VM is disposable: `limactl delete k8s` removes everything,
+  including any leftovers, so the steps above can be skipped when tearing the
+  VM down.
 
 ### Make goals
 
@@ -141,6 +206,8 @@ Following examples are provided:
 - [secret.yaml](./contrib/k8s/examples/secret.yaml) for arbiter installation kubeconfig secret
 - [remote-cluster.yaml](./contrib/k8s/examples/remote-cluster.yaml) for RemoteCluster resource
 - [remote-arbiter.yaml](./contrib/k8s/examples/remote-arbiter.yaml) for RemoteArbiter resource
+- [object-store.yaml](./contrib/k8s/examples/object-store.yaml) for CephObjectStore (RGW)
+- [object-store-user.yaml](./contrib/k8s/examples/object-store-user.yaml) for CephObjectStoreUser (S3 credentials)
 
 ### How to run
 
