@@ -9,12 +9,16 @@ manager:
     pullPolicy: Never
     tag: "latest"
   resources:
+    # The manager runs cluster-wide informers for secrets, configmaps and
+    # deployments and builds a fresh remote-cluster client (TLS handshakes)
+    # per reconcile; 100m/30Mi Guaranteed-QoS caps starve the healthz/readyz
+    # handlers under watch-event bursts (e.g. rook RGW orchestration).
     limits:
-      cpu: 100m
-      memory: 30Mi
+      cpu: "1"
+      memory: 256Mi
     requests:
       cpu: 100m
-      memory: 20Mi
+      memory: 64Mi
   securityContext:
     allowPrivilegeEscalation: false
     capabilities:
